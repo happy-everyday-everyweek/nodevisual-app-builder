@@ -6,10 +6,10 @@
   - [x] SubTask 1.3: 建立项目目录结构（features/core/data/presentation 分层）
   - [x] SubTask 1.4: 定义核心数据模型（Project / Function / Database / UI Artifact）
 
-- [ ] Task 2: 实现项目三段式结构与悬浮胶囊 Top 栏
-  - [ ] SubTask 2.1: 实现项目创建、打开、保存（本地持久化）
-  - [ ] SubTask 2.2: 实现悬浮胶囊状 Top 栏组件（函数 / 数据库 / UI 三段切换）
-  - [ ] SubTask 2.3: 三段编辑器状态独立保留，切换不丢失
+- [x] Task 2: 实现项目三段式结构与悬浮胶囊 Top 栏
+  - [x] SubTask 2.1: 实现项目创建、打开、保存（本地持久化）
+  - [x] SubTask 2.2: 实现悬浮胶囊状 Top 栏组件（函数 / 数据库 / UI 三段切换）
+  - [x] SubTask 2.3: 三段编辑器状态独立保留，切换不丢失
 
 - [ ] Task 3: 实现函数组织能力
   - [ ] SubTask 3.1: 函数命名、重命名

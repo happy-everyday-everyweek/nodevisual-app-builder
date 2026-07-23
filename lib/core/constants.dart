@@ -19,6 +19,12 @@ class AppConstants {
   static const String routeEditor = '/editor';
   static const String routeSettings = '/settings';
 
+  /// 项目编辑器路由路径模板（含 :id 路径参数）。
+  static const String routeProject = '/project/:id';
+
+  /// 拼接项目编辑器路由地址。
+  static String projectRoute(String id) => '/project/$id';
+
   // ---- 本地存储相关键名 ----
   /// SharedPreferences 中保存最近打开项目 id 的键。
   static const String prefKeyLastProjectId = 'last_project_id';
