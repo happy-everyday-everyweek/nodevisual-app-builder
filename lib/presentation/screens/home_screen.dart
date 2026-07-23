@@ -1,18 +1,69 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../core/constants.dart';
+import '../../data/repositories/project_repository.dart';
+import '../../features/project/project_providers.dart';
 
-/// 主页（项目列表）占位屏幕。
+/// 主页（项目列表）屏幕。
 ///
-/// Task 1 阶段仅提供占位 UI，后续 Task 会接入项目管理
-/// 与项目卡片列表、新建项目入口等真实逻辑。
+/// 展示来自 [projectListProvider] 的项目列表，支持新建项目
+/// （弹窗输入名称 → 创建 → 跳转编辑器）与点击项目跳转编辑器。
+/// 列表为空时显示引导文案。
 class HomeScreen extends ConsumerWidget {
   const HomeScreen({super.key});
 
+  /// 弹出新建项目对话框，返回输入名称（取消/空返回 null）。
+  Future<String?> _promptProjectName(BuildContext context) async {
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        final controller = TextEditingController();
+        return AlertDialog(
+          title: const Text('新建项目'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: const InputDecoration(
+              labelText: '项目名称',
+              hintText: '请输入项目名称',
+              border: OutlineInputBorder(),
+            ),
+            onSubmitted: (value) => Navigator.of(ctx).pop(value.trim()),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('取消'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+              child: const Text('创建'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// 新建项目流程：输入名称 → 创建 → 刷新列表 → 跳转编辑器。
+  Future<void> _createProject(BuildContext context, WidgetRef ref) async {
+    final name = await _promptProjectName(context);
+    if (name == null || name.isEmpty) return;
+    final repo = ref.read(projectRepositoryProvider);
+    final project = await repo.createProject(name);
+    ref.invalidate(projectListProvider);
+    if (!context.mounted) return;
+    context.push(AppConstants.projectRoute(project.meta.id));
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final asyncList = ref.watch(projectListProvider);
     final theme = Theme.of(context);
+
     return Scaffold(
       appBar: AppBar(
         title: const Text(AppConstants.appName),
@@ -24,41 +75,110 @@ class HomeScreen extends ConsumerWidget {
           ),
         ],
       ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.hub_outlined,
-              size: 72,
-              color: theme.colorScheme.primary,
+      body: SafeArea(
+        // 适配 Android 手势导航条 / edge-to-edge
+        bottom: false,
+        child: asyncList.when(
+          data: (list) => list.isEmpty
+              ? _EmptyState(theme: theme)
+              : _ProjectList(theme: theme, projects: list),
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (error, _) => Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text('加载项目列表失败：$error'),
             ),
-            const SizedBox(height: 16),
-            Text(
-              'NodeVisual App Builder',
-              style: theme.textTheme.headlineSmall,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '可视化节点编程工具',
-              style: theme.textTheme.bodyMedium?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-            const SizedBox(height: 32),
-            FilledButton.icon(
-              onPressed: () {},
-              icon: const Icon(Icons.add),
-              label: const Text('新建项目'),
-            ),
-          ],
+          ),
         ),
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {},
+        onPressed: () => _createProject(context, ref),
         icon: const Icon(Icons.add),
-        label: const Text('项目'),
+        label: const Text('新建项目'),
       ),
+    );
+  }
+}
+
+/// 空列表引导文案。
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({required this.theme});
+
+  final ThemeData theme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.hub_outlined,
+            size: 72,
+            color: theme.colorScheme.primary,
+          ),
+          const SizedBox(height: 16),
+          Text('还没有项目', style: theme.textTheme.headlineSmall),
+          const SizedBox(height: 8),
+          Text(
+            '点击右下角「新建项目」开始创建\n可视化节点编程应用',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 项目列表。
+class _ProjectList extends StatelessWidget {
+  const _ProjectList({required this.theme, required this.projects});
+
+  final ThemeData theme;
+  final List<ProjectSummary> projects;
+
+  String _formatTime(String iso) {
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      return '${dt.year}-${dt.month.toString().padLeft(2, '0')}-'
+          '${dt.day.toString().padLeft(2, '0')} '
+          '${dt.hour.toString().padLeft(2, '0')}:'
+          '${dt.minute.toString().padLeft(2, '0')}';
+    } catch (_) {
+      return iso;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.separated(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
+      itemCount: projects.length,
+      separatorBuilder: (_, __) => const SizedBox(height: 8),
+      itemBuilder: (context, index) {
+        final p = projects[index];
+        return Card(
+          child: ListTile(
+            leading: CircleAvatar(
+              backgroundColor: theme.colorScheme.primaryContainer,
+              foregroundColor: theme.colorScheme.onPrimaryContainer,
+              child: const Icon(Icons.folder_outlined),
+            ),
+            title: Text(
+              p.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            subtitle: Text('更新于 ${_formatTime(p.updatedAt)}'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => context.push(AppConstants.projectRoute(p.id)),
+          ),
+        );
+      },
     );
   }
 }

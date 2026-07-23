@@ -4,6 +4,10 @@ import 'package:go_router/go_router.dart';
 
 import 'core/constants.dart';
 import 'core/theme.dart';
+import 'features/node_graph/function_editor_screen.dart';
+import 'features/node_graph/node_editor_screen.dart';
+import 'presentation/screens/build/build_screen.dart';
+import 'presentation/screens/editor/editor_shell_screen.dart';
 import 'presentation/screens/home_screen.dart';
 
 /// 应用根 Widget。
@@ -28,8 +32,7 @@ class NodeVisualApp extends ConsumerWidget {
 
 /// 全局路由配置。
 ///
-/// Task 1 阶段仅注册主页路由，后续 Task 将按需追加
-/// 编辑器、设置、节点详情等子路由。
+/// 注册主页与项目编辑器路由；后续 Task 按需追加节点详情、设置等子路由。
 final GoRouter _router = GoRouter(
   initialLocation: AppConstants.routeHome,
   routes: <RouteBase>[
@@ -39,6 +42,52 @@ final GoRouter _router = GoRouter(
       builder: (BuildContext context, GoRouterState state) {
         return const HomeScreen();
       },
+    ),
+    GoRoute(
+      path: AppConstants.routeProject,
+      name: 'project',
+      builder: (BuildContext context, GoRouterState state) {
+        final projectId = state.pathParameters['id']!;
+        return EditorShellScreen(projectId: projectId);
+      },
+      routes: <RouteBase>[
+        GoRoute(
+          path: 'function/:fid',
+          name: 'functionEditor',
+          builder: (BuildContext context, GoRouterState state) {
+            final projectId = state.pathParameters['id']!;
+            final functionId = state.pathParameters['fid']!;
+            return FunctionEditorScreen(
+              projectId: projectId,
+              functionId: functionId,
+            );
+          },
+          routes: <RouteBase>[
+            GoRoute(
+              path: 'node/:nid',
+              name: 'nodeEditor',
+              builder: (BuildContext context, GoRouterState state) {
+                final projectId = state.pathParameters['id']!;
+                final functionId = state.pathParameters['fid']!;
+                final nodeId = state.pathParameters['nid']!;
+                return NodeEditorScreen(
+                  projectId: projectId,
+                  functionId: functionId,
+                  nodeId: nodeId,
+                );
+              },
+            ),
+          ],
+        ),
+        GoRoute(
+          path: 'build',
+          name: 'build',
+          builder: (BuildContext context, GoRouterState state) {
+            final projectId = state.pathParameters['id']!;
+            return BuildScreen(projectId: projectId);
+          },
+        ),
+      ],
     ),
   ],
 );

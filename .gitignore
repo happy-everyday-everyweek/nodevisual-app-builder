@@ -1,5 +1,7 @@
 # Flutter / Dart
 build/
+# 例外：保留源码目录 lib/presentation/screens/build/（含构建打包 UI）
+!lib/presentation/screens/build/
 .dart_tool/
 .packages
 .flutter-plugins
