@@ -1,0 +1,24 @@
+# This file tracks properties of this Flutter project.
+# Used by Flutter tool to assess capabilities and perform migrations.
+#
+# This file should be version controlled and should not be edited manually.
+
+version:
+  revision: "unknown"
+  channel: "unknown"
+
+project_type: app
+
+migration:
+  platforms:
+    - platform: root
+    - platform: android
+  revisions:
+    - platform: root
+      revision: "0"
+    - platform: android
+      revision: "0"
+
+# Tracks the version of the generated files. Increment this when the
+# migration tooling changes the file format.
+generated_file_revision: "1"

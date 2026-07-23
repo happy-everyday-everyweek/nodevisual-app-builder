@@ -1,0 +1,29 @@
+# Flutter / Dart
+build/
+.dart_tool/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+ios/Pods/
+android/.gradle/
+android/local.properties
+linux/flutter/ephemeral/
+macos/Flutter/ephemeral/
+windows/flutter/ephemeral/
+
+# IDE
+*.iml
+.idea/
+.vscode/
+.DS_Store
+
+# Trae cache (specs 目录保留提交)
+.trae/cache/
+
+# Secrets
+*.keystore
+*.jks
+key.properties
+.env
