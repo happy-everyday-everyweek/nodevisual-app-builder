@@ -37,6 +37,11 @@ class PluginRegistry {
     _entries[spec.id] = PluginEntry(spec: spec, executor: executor);
   }
 
+  /// 注销插件。
+  void unregister(String id) {
+    _entries.remove(id);
+  }
+
   /// 按 id 查询插件条目；未注册返回 null。
   PluginEntry? get(String id) => _entries[id];
 

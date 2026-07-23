@@ -9,6 +9,7 @@ import 'features/node_graph/node_editor_screen.dart';
 import 'presentation/screens/build/build_screen.dart';
 import 'presentation/screens/editor/editor_shell_screen.dart';
 import 'presentation/screens/home_screen.dart';
+import 'presentation/screens/marketplace/marketplace_screen.dart';
 
 /// 应用根 Widget。
 ///
@@ -41,6 +42,13 @@ final GoRouter _router = GoRouter(
       name: 'home',
       builder: (BuildContext context, GoRouterState state) {
         return const HomeScreen();
+      },
+    ),
+    GoRoute(
+      path: AppConstants.routeMarketplace,
+      name: 'marketplace',
+      builder: (BuildContext context, GoRouterState state) {
+        return const MarketplaceScreen();
       },
     ),
     GoRoute(
