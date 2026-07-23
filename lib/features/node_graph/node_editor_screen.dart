@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -9,6 +11,8 @@ import '../../data/models/port.dart';
 import '../../data/models/project.dart';
 import '../../data/models/variable_ref.dart';
 import '../project/project_providers.dart';
+import '../variables/scope_resolver.dart';
+import '../variables/variable_picker_sheet.dart';
 import 'graph_providers.dart';
 import 'node_kinds.dart';
 import 'type_checker.dart';
@@ -81,6 +85,7 @@ class NodeEditorScreen extends ConsumerWidget {
               spec: spec,
               functionDef: fn!,
               project: project,
+              functionId: functionId,
               nodeId: nodeId,
             ),
     );
@@ -117,6 +122,7 @@ class _NodeEditorBody extends ConsumerWidget {
     required this.spec,
     required this.functionDef,
     required this.project,
+    required this.functionId,
     required this.nodeId,
   });
 
@@ -124,6 +130,7 @@ class _NodeEditorBody extends ConsumerWidget {
   final NodeKindSpec? spec;
   final FunctionDef functionDef;
   final Project? project;
+  final String functionId;
   final String nodeId;
 
   @override
@@ -219,7 +226,10 @@ class _NodeEditorBody extends ConsumerWidget {
           rawValue: node.params[p.name],
           functionDef: functionDef,
           project: project,
+          functionId: functionId,
+          nodeId: nodeId,
           onChanged: (v) => _commitParam(ref, p.name, v),
+          onSetRef: (r) => _commitParam(ref, p.name, r.toJson()),
           onClearRef: () => _commitParam(ref, p.name, null),
         );
     }
@@ -252,14 +262,25 @@ class _NodeEditorBody extends ConsumerWidget {
 // ---- 参数控件 ----
 
 /// 文本 / 数值参数；当值为 `#` 引用（[VariableRef]）时切换为只读展示 +
-/// 类型校验图标 + 清除按钮，否则可编辑文本 + # 按钮（v1 插入 "##" 占位）。
-class _RefOrTextField extends StatelessWidget {
+/// 类型校验图标 + 清除 / 重新选择按钮，否则可编辑文本 + # 按钮。
+///
+/// **# 交互（Task 7）**：
+/// - 点击 # 按钮 → 弹出 [VariablePickerSheet] 卡片选择变量；
+/// - 在输入框输入 `#` → 防抖后弹出卡片；
+/// - 输入 `#名称` → 防抖后调用 [ScopeResolver.matchByName]：唯一命中直建引用，
+///   不唯一 / 未命中则弹出卡片（预填搜索词）；
+/// - 引用态下显示引用目标 + 清除（改回字面值）/ 重新选择按钮；
+/// - 类型不匹配时在参数下方显示 ⚠ 提示（用 [checkRefType]）。
+class _RefOrTextField extends StatefulWidget {
   const _RefOrTextField({
     required this.spec,
     required this.rawValue,
     required this.functionDef,
     required this.project,
+    required this.functionId,
+    required this.nodeId,
     required this.onChanged,
+    required this.onSetRef,
     required this.onClearRef,
   });
 
@@ -267,13 +288,140 @@ class _RefOrTextField extends StatelessWidget {
   final Object? rawValue;
   final FunctionDef functionDef;
   final Project? project;
+  final String functionId;
+  final String nodeId;
+
+  /// 字面值文本变更（逐字符提交）。
   final ValueChanged<String> onChanged;
+
+  /// 选中变量引用后提交（参数值存为 [VariableRef] 的 JSON）。
+  final ValueChanged<VariableRef> onSetRef;
+
+  /// 清除引用、改回字面值（参数值置 null）。
   final VoidCallback onClearRef;
+
+  @override
+  State<_RefOrTextField> createState() => _RefOrTextFieldState();
+}
+
+class _RefOrTextFieldState extends State<_RefOrTextField> {
+  late final TextEditingController _controller;
+  late final FocusNode _focus;
+  Timer? _debounce;
+
+  /// 卡片是否已弹出（防止重复弹出 / 编辑期重复触发）。
+  bool _picking = false;
+
+  /// 卡片由 `#` 输入触发时，取消需清回字面值；由 # 按钮触发时不清空。
+  bool _clearOnCancel = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: _stringOf(widget.rawValue));
+    _focus = FocusNode();
+  }
+
+  @override
+  void didUpdateWidget(covariant _RefOrTextField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 仅在非聚焦（非编辑态）时回填外部值，避免编辑时光标跳动。
+    if (!_focus.hasFocus) {
+      final external = _stringOf(widget.rawValue);
+      if (_controller.text != external) {
+        _controller.text = external;
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _controller.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  VariableRef? get _ref => _tryParseRef(widget.rawValue);
+
+  PortType get _expectedType => widget.spec.expectedType ?? PortType.any;
+
+  void _onTextChanged(String text) {
+    widget.onChanged(text);
+    if (_picking) return;
+    _debounce?.cancel();
+    if (!text.startsWith('#')) {
+      _clearOnCancel = false;
+      return;
+    }
+    _clearOnCancel = true;
+    final name = text.substring(1);
+    if (name.isEmpty) {
+      // 仅有 '#'，稍后弹卡片。
+      _debounce = Timer(const Duration(milliseconds: 300), () {
+        _openSheet();
+      });
+    } else {
+      // '#名称' 快速匹配。
+      _debounce = Timer(const Duration(milliseconds: 450), () {
+        _tryQuickRef(name);
+      });
+    }
+  }
+
+  /// `#名称` 快速引用：唯一命中直建引用，否则弹卡片（预填搜索词）。
+  void _tryQuickRef(String name) {
+    if (!mounted || _picking) return;
+    final refs = ScopeResolver.matchByName(
+      widget.functionDef,
+      widget.project,
+      widget.nodeId,
+      name,
+    );
+    if (refs.length == 1) {
+      widget.onSetRef(refs.first);
+    } else {
+      _openSheet(initialQuery: name);
+    }
+  }
+
+  Future<void> _openSheet({String? initialQuery}) async {
+    if (_picking) return;
+    _picking = true;
+    _debounce?.cancel();
+    final clearOnCancel = _clearOnCancel;
+    _clearOnCancel = false;
+    final selected = await VariablePickerSheet.show(
+      context,
+      functionId: widget.functionId,
+      nodeId: widget.nodeId,
+      expectedType: widget.spec.expectedType,
+      initialQuery: initialQuery,
+    );
+    _picking = false;
+    if (!mounted) return;
+    if (selected != null) {
+      widget.onSetRef(selected);
+    } else if (clearOnCancel) {
+      // 取消 `#` 触发：清回字面值。
+      _controller.text = '';
+      widget.onChanged('');
+    }
+  }
+
+  void _onRefButton() {
+    // # 按钮：直接弹卡片；取消不清空已有字面值。
+    _clearOnCancel = false;
+    _openSheet();
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final ref = _tryParseRef(rawValue);
+    final ref = _ref;
+    final typeResult = ref == null
+        ? null
+        : checkRefType(ref, _expectedType, widget.functionDef, widget.project);
     return Padding(
       padding: const EdgeInsets.only(top: 12),
       child: Column(
@@ -281,32 +429,55 @@ class _RefOrTextField extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text(spec.label,
+              Text(widget.spec.label,
                   style: theme.textTheme.labelLarge
                       ?.copyWith(fontWeight: FontWeight.w600,),),
               const Spacer(),
-              if (spec.acceptsRef && ref != null)
+              if (widget.spec.acceptsRef && ref != null)
                 _RefTypeBadge(
                   ref: ref,
-                  expectedType: spec.expectedType ?? PortType.any,
-                  functionDef: functionDef,
-                  project: project,
+                  expectedType: _expectedType,
+                  functionDef: widget.functionDef,
+                  project: widget.project,
                 ),
             ],
           ),
           const SizedBox(height: 6),
           if (ref != null)
-            _RefDisplay(ref: ref, onClear: onClearRef)
+            _RefDisplay(
+              ref: ref,
+              functionDef: widget.functionDef,
+              project: widget.project,
+              onClear: widget.onClearRef,
+              onReselect: _onRefButton,
+            )
           else
-            _SyncedTextField(
-              value: _stringOf(rawValue),
-              keyboardType: spec.inputType == ParamInputType.number
-                  ? TextInputType.number
-                  : TextInputType.text,
-              acceptsRef: spec.acceptsRef,
-              onChanged: onChanged,
-            ),
+            _buildTextField(),
+          if (ref != null && typeResult != null && !typeResult.ok)
+            _TypeMismatchHint(reason: typeResult.reason, theme: theme),
         ],
+      ),
+    );
+  }
+
+  Widget _buildTextField() {
+    return TextField(
+      controller: _controller,
+      focusNode: _focus,
+      keyboardType: widget.spec.inputType == ParamInputType.number
+          ? TextInputType.number
+          : TextInputType.text,
+      onChanged: _onTextChanged,
+      decoration: InputDecoration(
+        isDense: true,
+        border: const OutlineInputBorder(),
+        suffixIcon: widget.spec.acceptsRef
+            ? IconButton(
+                tooltip: '插入变量引用 (#)',
+                icon: const Icon(Icons.tag, size: 18),
+                onPressed: _onRefButton,
+              )
+            : null,
       ),
     );
   }
@@ -315,19 +486,15 @@ class _RefOrTextField extends StatelessWidget {
 /// 自同步文本输入框（避免每次重建丢失光标）。
 ///
 /// 仅在未聚焦时把外部 [value] 回填到控制器；编辑时由控制器主导。
-/// # 按钮在末尾追加 "##" 占位（v1，Task 7 升级为卡片选择）。
+/// 用于字符串列表参数（[ParamInputType.listStrings]）的逐项编辑。
 class _SyncedTextField extends StatefulWidget {
   const _SyncedTextField({
     required this.value,
     required this.onChanged,
-    this.keyboardType,
-    this.acceptsRef = false,
   });
 
   final String value;
   final ValueChanged<String> onChanged;
-  final TextInputType? keyboardType;
-  final bool acceptsRef;
 
   @override
   State<_SyncedTextField> createState() => _SyncedTextFieldState();
@@ -359,49 +526,43 @@ class _SyncedTextFieldState extends State<_SyncedTextField> {
     super.dispose();
   }
 
-  void _insertRef() {
-    final next = '${_controller.text}##';
-    _controller.text = next;
-    _controller.selection = TextSelection.fromPosition(
-      TextPosition(offset: next.length),
-    );
-    widget.onChanged(next);
-  }
-
   @override
   Widget build(BuildContext context) {
     return TextField(
       controller: _controller,
       focusNode: _focus,
-      keyboardType: widget.keyboardType,
       onChanged: widget.onChanged,
-      decoration: InputDecoration(
+      decoration: const InputDecoration(
         isDense: true,
-        border: const OutlineInputBorder(),
-        suffixIcon: widget.acceptsRef
-            ? IconButton(
-                tooltip: '插入引用占位 (#)',
-                icon: const Icon(Icons.tag, size: 18),
-                onPressed: _insertRef,
-              )
-            : null,
+        border: OutlineInputBorder(),
       ),
     );
   }
 }
 
-/// 已配置引用时的只读展示 + 清除按钮。
+/// 已配置引用时的只读展示 + 重新选择 / 清除按钮。
 class _RefDisplay extends StatelessWidget {
-  const _RefDisplay({required this.ref, required this.onClear});
+  const _RefDisplay({
+    required this.ref,
+    required this.functionDef,
+    required this.project,
+    required this.onClear,
+    required this.onReselect,
+  });
 
   final VariableRef ref;
+  final FunctionDef functionDef;
+  final Project? project;
   final VoidCallback onClear;
+
+  /// 重新打开变量选择卡片（保留引用态切换）。
+  final VoidCallback onReselect;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.5),
         borderRadius: BorderRadius.circular(8),
@@ -413,7 +574,7 @@ class _RefDisplay extends StatelessWidget {
           const SizedBox(width: 6),
           Expanded(
             child: Text(
-              _refLabel(ref),
+              _refDisplayLabel(ref, functionDef, project),
               style: theme.textTheme.bodyMedium?.copyWith(
                 fontFamily: 'monospace',
               ),
@@ -422,7 +583,13 @@ class _RefDisplay extends StatelessWidget {
             ),
           ),
           IconButton(
-            tooltip: '清除引用',
+            tooltip: '重新选择',
+            icon: Icon(Icons.refresh, size: 16, color: theme.colorScheme.primary),
+            onPressed: onReselect,
+            visualDensity: VisualDensity.compact,
+          ),
+          IconButton(
+            tooltip: '清除引用 / 改回字面值',
             icon: Icon(Icons.close, size: 16, color: theme.colorScheme.error),
             onPressed: onClear,
             visualDensity: VisualDensity.compact,
@@ -431,16 +598,35 @@ class _RefDisplay extends StatelessWidget {
       ),
     );
   }
+}
 
-  static String _refLabel(VariableRef ref) {
-    switch (ref.source) {
-      case VariableSource.upstream:
-        return '#${ref.nodeId}.${ref.outputName}';
-      case VariableSource.funcVar:
-        return '#func:${ref.varId}';
-      case VariableSource.projVar:
-        return '#proj:${ref.varId}';
-    }
+/// 引用类型不匹配时参数下方的 ⚠ 提示行。
+class _TypeMismatchHint extends StatelessWidget {
+  const _TypeMismatchHint({required this.reason, required this.theme});
+
+  final String reason;
+  final ThemeData theme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.warning_amber,
+              size: 14, color: theme.colorScheme.error),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Text(
+              reason,
+              style: theme.textTheme.labelSmall
+                  ?.copyWith(color: theme.colorScheme.error),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -800,6 +986,46 @@ String _stringOf(Object? v) {
   if (v == null) return '';
   if (v is String) return v;
   return v.toString();
+}
+
+/// 生成引用的可读展示文本（尽量用名称而非 id）。
+///
+/// - upstream：`#节点展示名.输出名`（节点展示名取自 [NodeKindRegistry]，
+///   未注册回退 kind；找不到节点 / 输出时回退 `#nodeId.outputName`）；
+/// - funcVar：`#变量名`（找不到回退 `#func:varId`）；
+/// - projVar：`#变量名`（找不到回退 `#proj:varId`）。
+String _refDisplayLabel(VariableRef ref, FunctionDef fn, Project? project) {
+  switch (ref.source) {
+    case VariableSource.upstream:
+      final nodeId = ref.nodeId;
+      final outputName = ref.outputName;
+      if (nodeId == null || outputName == null) {
+        return '#<无效引用>';
+      }
+      for (final node in fn.nodes) {
+        if (node.id != nodeId) continue;
+        final spec = NodeKindRegistry.getSpec(node.kind);
+        final label = spec?.displayName ?? node.kind;
+        return '#$label.$outputName';
+      }
+      return '#$nodeId.$outputName';
+    case VariableSource.funcVar:
+      final varId = ref.varId;
+      if (varId == null) return '#<无效引用>';
+      for (final v in fn.funcVars) {
+        if (v.id == varId) return '#${v.name}';
+      }
+      return '#func:$varId';
+    case VariableSource.projVar:
+      final varId = ref.varId;
+      if (varId == null) return '#<无效引用>';
+      if (project != null) {
+        for (final v in project.projectVars) {
+          if (v.id == varId) return '#${v.name}';
+        }
+      }
+      return '#proj:$varId';
+  }
 }
 
 /// 从原始值解析字符串列表（[ParamInputType.listStrings]）。

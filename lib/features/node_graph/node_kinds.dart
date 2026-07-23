@@ -391,6 +391,181 @@ class NodeKindRegistry {
         defaultControlOutputs: [],
         defaultDataOutputs: [],
       ),
+
+      // ---- 数据库 ----
+      // table 参数采用 text 输入（v1 最小侵入方案，不改 node_editor_screen；
+      // 运行时由用户手动输入表名，项目表名可在数据库段查看）。
+      NodeKindSpec(
+        kind: 'db_query',
+        displayName: '数据库查询',
+        category: NodeCategory.database,
+        paramSchema: const [
+          ParamSpec(
+            name: 'table',
+            label: '表名',
+            inputType: ParamInputType.text,
+            defaultValue: '',
+          ),
+          ParamSpec(
+            name: 'filter',
+            label: '筛选条件（可选 WHERE）',
+            inputType: ParamInputType.text,
+            acceptsRef: true,
+            expectedType: PortType.string,
+          ),
+          ParamSpec(
+            name: 'limit',
+            label: '限制行数',
+            inputType: ParamInputType.text,
+            acceptsRef: true,
+            expectedType: PortType.number,
+          ),
+        ],
+        defaultControlOutputs: ['next'],
+        defaultDataOutputs: [
+          (name: 'rows', type: PortType.map),
+          (name: 'count', type: PortType.number),
+        ],
+      ),
+      NodeKindSpec(
+        kind: 'db_insert',
+        displayName: '数据库插入',
+        category: NodeCategory.database,
+        paramSchema: const [
+          ParamSpec(
+            name: 'table',
+            label: '表名',
+            inputType: ParamInputType.text,
+            defaultValue: '',
+          ),
+          ParamSpec(
+            name: 'data',
+            label: '数据',
+            inputType: ParamInputType.text,
+            acceptsRef: true,
+            expectedType: PortType.map,
+          ),
+        ],
+        defaultControlOutputs: ['next'],
+        defaultDataOutputs: [
+          (name: 'insertedId', type: PortType.number),
+          (name: 'affected', type: PortType.number),
+        ],
+      ),
+      NodeKindSpec(
+        kind: 'db_update',
+        displayName: '数据库更新',
+        category: NodeCategory.database,
+        paramSchema: const [
+          ParamSpec(
+            name: 'table',
+            label: '表名',
+            inputType: ParamInputType.text,
+            defaultValue: '',
+          ),
+          ParamSpec(
+            name: 'filter',
+            label: '筛选条件',
+            inputType: ParamInputType.text,
+            acceptsRef: true,
+            expectedType: PortType.string,
+          ),
+          ParamSpec(
+            name: 'data',
+            label: '数据',
+            inputType: ParamInputType.text,
+            acceptsRef: true,
+            expectedType: PortType.map,
+          ),
+        ],
+        defaultControlOutputs: ['next'],
+        defaultDataOutputs: [
+          (name: 'affected', type: PortType.number),
+        ],
+      ),
+      NodeKindSpec(
+        kind: 'db_delete',
+        displayName: '数据库删除',
+        category: NodeCategory.database,
+        paramSchema: const [
+          ParamSpec(
+            name: 'table',
+            label: '表名',
+            inputType: ParamInputType.text,
+            defaultValue: '',
+          ),
+          ParamSpec(
+            name: 'filter',
+            label: '筛选条件',
+            inputType: ParamInputType.text,
+            acceptsRef: true,
+            expectedType: PortType.string,
+          ),
+        ],
+        defaultControlOutputs: ['next'],
+        defaultDataOutputs: [
+          (name: 'affected', type: PortType.number),
+        ],
+      ),
+      NodeKindSpec(
+        kind: 'db_create_table',
+        displayName: '数据库建表',
+        category: NodeCategory.database,
+        paramSchema: const [
+          ParamSpec(
+            name: 'table',
+            label: '表名',
+            inputType: ParamInputType.text,
+            defaultValue: '',
+          ),
+          ParamSpec(
+            name: 'columnsSpec',
+            label: '列定义',
+            inputType: ParamInputType.text,
+            defaultValue: '',
+          ),
+        ],
+        defaultControlOutputs: ['next'],
+        defaultDataOutputs: [
+          (name: 'success', type: PortType.boolean),
+        ],
+      ),
+      NodeKindSpec(
+        kind: 'db_alter_table',
+        displayName: '数据库改表',
+        category: NodeCategory.database,
+        paramSchema: const [
+          ParamSpec(
+            name: 'table',
+            label: '表名',
+            inputType: ParamInputType.text,
+            defaultValue: '',
+          ),
+          ParamSpec(
+            name: 'action',
+            label: '操作',
+            inputType: ParamInputType.dropdown,
+            options: ['add', 'drop', 'rename'],
+            defaultValue: 'add',
+          ),
+          ParamSpec(
+            name: 'columnName',
+            label: '列名',
+            inputType: ParamInputType.text,
+            defaultValue: '',
+          ),
+          ParamSpec(
+            name: 'newType',
+            label: '新类型（可选）',
+            inputType: ParamInputType.text,
+            defaultValue: '',
+          ),
+        ],
+        defaultControlOutputs: ['next'],
+        defaultDataOutputs: [
+          (name: 'success', type: PortType.boolean),
+        ],
+      ),
     ];
 
     final map = <String, NodeKindSpec>{};
