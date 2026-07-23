@@ -130,6 +130,13 @@ class NodeKindSpec {
   /// 动态输出生成器（非 null 时优先使用，覆盖默认输出）。
   final DynamicOutputsFn? dynamicOutputs;
 
+  /// 关联的插件 id（仅 plugin 类节点有效，如 `llm_openai`）。
+  ///
+  /// 用于节点编辑页打开插件配置面板（[PluginConfigSheet]）。null 表示该
+  /// kind 不关联插件。Task 9 的 plugin_* kind 通过此字段与 [PluginRegistry]
+  /// 中的插件条目关联。
+  final String? pluginId;
+
   const NodeKindSpec({
     required this.kind,
     required this.displayName,
@@ -138,6 +145,7 @@ class NodeKindSpec {
     this.defaultControlOutputs = const [],
     this.defaultDataOutputs = const [],
     this.dynamicOutputs,
+    this.pluginId,
   });
 }
 
@@ -564,6 +572,77 @@ class NodeKindRegistry {
         defaultControlOutputs: ['next'],
         defaultDataOutputs: [
           (name: 'success', type: PortType.boolean),
+        ],
+      ),
+
+      // ---- 插件（Task 9 / 10）----
+      // plugin_<name> kind 通过 pluginId 关联 [PluginRegistry] 中的插件条目。
+      // 参数区上方在节点编辑页展示"插件配置"入口（[PluginConfigSheet]）。
+      // messages 参数支持 # 引用（期望 list 类型）；model / temperature / maxTokens
+      // 为字面值。数据输出 content(string) + usage_tokens(number) 与 LLM executor
+      // 返回的 outputs map 对齐。
+      NodeKindSpec(
+        kind: 'plugin_openai',
+        displayName: 'OpenAI 插件',
+        category: NodeCategory.plugin,
+        pluginId: 'llm_openai',
+        paramSchema: const [
+          ParamSpec(
+            name: 'messages',
+            label: '消息列表',
+            inputType: ParamInputType.text,
+            acceptsRef: true,
+            expectedType: PortType.list,
+          ),
+          ParamSpec(
+            name: 'model',
+            label: '模型',
+            inputType: ParamInputType.text,
+            defaultValue: 'gpt-4o-mini',
+          ),
+          ParamSpec(
+            name: 'temperature',
+            label: '温度',
+            inputType: ParamInputType.number,
+            defaultValue: 0.7,
+          ),
+        ],
+        defaultControlOutputs: ['next'],
+        defaultDataOutputs: [
+          (name: 'content', type: PortType.string),
+          (name: 'usage_tokens', type: PortType.number),
+        ],
+      ),
+      NodeKindSpec(
+        kind: 'plugin_anthropic',
+        displayName: 'Anthropic 插件',
+        category: NodeCategory.plugin,
+        pluginId: 'llm_anthropic',
+        paramSchema: const [
+          ParamSpec(
+            name: 'messages',
+            label: '消息列表',
+            inputType: ParamInputType.text,
+            acceptsRef: true,
+            expectedType: PortType.list,
+          ),
+          ParamSpec(
+            name: 'model',
+            label: '模型',
+            inputType: ParamInputType.text,
+            defaultValue: 'claude-3-5-sonnet-20240612',
+          ),
+          ParamSpec(
+            name: 'maxTokens',
+            label: '最大 token 数',
+            inputType: ParamInputType.number,
+            defaultValue: 1024,
+          ),
+        ],
+        defaultControlOutputs: ['next'],
+        defaultDataOutputs: [
+          (name: 'content', type: PortType.string),
+          (name: 'usage_tokens', type: PortType.number),
         ],
       ),
     ];

@@ -10,6 +10,9 @@ import '../../data/models/node.dart';
 import '../../data/models/port.dart';
 import '../../data/models/project.dart';
 import '../../data/models/variable_ref.dart';
+import '../plugins/plugin_config_sheet.dart';
+import '../plugins/plugin_registry.dart';
+import '../plugins/plugin_spec.dart';
 import '../project/project_providers.dart';
 import '../variables/scope_resolver.dart';
 import '../variables/variable_picker_sheet.dart';
@@ -143,6 +146,11 @@ class _NodeEditorBody extends ConsumerWidget {
         children: [
           if (spec == null) _buildUnsupportedNote(theme),
           if (spec != null) ...[
+            // 插件配置入口（仅 plugin 类节点显示，最小侵入，不影响 # 引用）。
+            if (spec!.pluginId != null) ...[
+              _PluginConfigCard(pluginId: spec!.pluginId!),
+              const SizedBox(height: 20),
+            ],
             _SectionTitle(title: '参数'),
             const SizedBox(height: 4),
             ...[
@@ -908,6 +916,122 @@ class _EmptyHint extends StatelessWidget {
 }
 
 // ---- 通用小组件 ----
+
+/// 插件配置入口卡片（仅 plugin 类节点显示）。
+///
+/// 展示关联插件的 displayName 与配置状态（必填 secret 字段是否已配置），
+/// 点击"配置"按钮打开 [PluginConfigSheet]。**不影响参数区的 # 引用交互**。
+class _PluginConfigCard extends ConsumerStatefulWidget {
+  const _PluginConfigCard({required this.pluginId});
+
+  final String pluginId;
+
+  @override
+  ConsumerState<_PluginConfigCard> createState() => _PluginConfigCardState();
+}
+
+class _PluginConfigCardState extends ConsumerState<_PluginConfigCard> {
+  bool _loading = true;
+  bool _requiredReady = false;
+  int _fieldCount = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshStatus();
+  }
+
+  /// 读取配置并计算必填字段是否已就绪（用于状态提示）。
+  Future<void> _refreshStatus() async {
+    final storage = ref.read(pluginConfigStorageProvider);
+    final registry = ref.read(pluginRegistryProvider);
+    final entry = registry.get(widget.pluginId);
+    final config = await storage.getPluginConfig(widget.pluginId);
+    if (!mounted) return;
+    bool ready = true;
+    final fields = entry?.spec.configSchema ?? const <ConfigField>[];
+    for (final f in fields) {
+      if (f.required) {
+        final v = config[f.key];
+        if (v == null || v.toString().trim().isEmpty) {
+          ready = false;
+          break;
+        }
+      }
+    }
+    setState(() {
+      _loading = false;
+      _requiredReady = ready;
+      _fieldCount = fields.length;
+    });
+  }
+
+  Future<void> _openSheet() async {
+    final saved = await PluginConfigSheet.show(context, pluginId: widget.pluginId);
+    if (saved == true && mounted) {
+      // 保存后刷新状态。
+      setState(() => _loading = true);
+      _refreshStatus();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final entry = ref.watch(pluginRegistryProvider).get(widget.pluginId);
+    final spec = entry?.spec;
+    if (spec == null) {
+      return const SizedBox.shrink();
+    }
+    return Card(
+      color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.4),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            Icon(Icons.extension, size: 20, color: theme.colorScheme.primary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '${spec.displayName} 配置',
+                    style: theme.textTheme.labelLarge
+                        ?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    _statusText(),
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: _loading
+                          ? theme.colorScheme.outline
+                          : (_requiredReady
+                              ? Colors.green
+                              : theme.colorScheme.error),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            FilledButton.tonalIcon(
+              onPressed: _openSheet,
+              icon: const Icon(Icons.tune, size: 16),
+              label: const Text('配置'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _statusText() {
+    if (_loading) return '加载中…';
+    if (_fieldCount == 0) return '无配置项';
+    return _requiredReady ? '已配置' : '必填项未配置';
+  }
+}
 
 class _SectionTitle extends StatelessWidget {
   const _SectionTitle({required this.title});
