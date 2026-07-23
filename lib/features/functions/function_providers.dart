@@ -222,6 +222,22 @@ class ProjectMutator extends Notifier<Project?> {
     ),);
   }
 
+  /// 用完整 [FunctionDef] 替换同 id 的函数（节点图编辑器使用）。
+  ///
+  /// 节点图编辑器（[GraphMutator]）将所有节点 / 控制流边的局部变更
+  /// 聚合为新的 [FunctionDef] 快照，经此方法写回项目并持久化。
+  void replaceFunction(FunctionDef fn) {
+    final p = _project;
+    if (p == null) return;
+    final exists = p.functions.any((f) => f.id == fn.id);
+    if (!exists) return;
+    _commit(p.copyWith(
+      functions: p.functions
+          .map((f) => f.id == fn.id ? fn : f)
+          .toList(growable: false),
+    ),);
+  }
+
   // ---- 文件夹 CRUD ----
 
   /// 创建文件夹；返回新文件夹 id。parentId 为 null 表示顶层。

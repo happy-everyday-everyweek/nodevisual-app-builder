@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import 'core/constants.dart';
 import 'core/theme.dart';
+import 'features/node_graph/function_editor_screen.dart';
 import 'presentation/screens/editor/editor_shell_screen.dart';
 import 'presentation/screens/home_screen.dart';
 
@@ -47,6 +48,20 @@ final GoRouter _router = GoRouter(
         final projectId = state.pathParameters['id']!;
         return EditorShellScreen(projectId: projectId);
       },
+      routes: <RouteBase>[
+        GoRoute(
+          path: 'function/:fid',
+          name: 'functionEditor',
+          builder: (BuildContext context, GoRouterState state) {
+            final projectId = state.pathParameters['id']!;
+            final functionId = state.pathParameters['fid']!;
+            return FunctionEditorScreen(
+              projectId: projectId,
+              functionId: functionId,
+            );
+          },
+        ),
+      ],
     ),
   ],
 );

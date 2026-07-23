@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../core/constants.dart';
 import '../../data/models/folder.dart';
 import '../../data/models/function_def.dart';
 import '../../data/models/project.dart';
@@ -794,14 +796,9 @@ class _FunctionsSegmentViewState extends ConsumerState<FunctionsSegmentView> {
             Align(
               alignment: Alignment.centerRight,
               child: FilledButton.icon(
-                onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('节点图编辑器将在 Task 4 实现'),
-                      duration: Duration(seconds: 2),
-                    ),
-                  );
-                },
+                onPressed: () => context.go(
+                  AppConstants.functionEditorRoute(project.meta.id, fn.id),
+                ),
                 icon: const Icon(Icons.open_in_new, size: 18),
                 label: const Text('打开编辑器'),
               ),

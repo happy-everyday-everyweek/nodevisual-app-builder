@@ -25,6 +25,13 @@ class AppConstants {
   /// 拼接项目编辑器路由地址。
   static String projectRoute(String id) => '/project/$id';
 
+  /// 函数节点图编辑器路由路径模板（含 :id 与 :fid 路径参数）。
+  static const String routeFunctionEditor = '/project/:id/function/:fid';
+
+  /// 拼接函数节点图编辑器路由地址。
+  static String functionEditorRoute(String projectId, String functionId) =>
+      '/project/$projectId/function/$functionId';
+
   // ---- 本地存储相关键名 ----
   /// SharedPreferences 中保存最近打开项目 id 的键。
   static const String prefKeyLastProjectId = 'last_project_id';
