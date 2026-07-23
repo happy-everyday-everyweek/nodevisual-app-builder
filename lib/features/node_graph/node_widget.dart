@@ -21,6 +21,7 @@ class NodeCard extends StatelessWidget {
     required this.node,
     required this.selected,
     this.onSelect,
+    this.onOpenEditor,
     this.onDelete,
     this.onDragUpdate,
     this.onConnectionDragStart,
@@ -37,6 +38,9 @@ class NodeCard extends StatelessWidget {
 
   /// 长按选中回调。
   final VoidCallback? onSelect;
+
+  /// 单击打开节点编辑页回调（数据平面入口）。
+  final VoidCallback? onOpenEditor;
 
   /// 删除节点回调（通过节点详情菜单触发）。
   final VoidCallback? onDelete;
@@ -88,9 +92,14 @@ class NodeCard extends StatelessWidget {
         child: Stack(
           clipBehavior: Clip.none,
           children: [
-            // 卡片主体：长按选中 + 单指拖拽（端口在 Stack 上层，自身手势让位）。
+            // 卡片主体：单击打开节点编辑页（同时选中）+ 长按选中 + 单指拖拽移动。
+            // 端口在 Stack 上层，自身手势让位。
             GestureDetector(
               behavior: HitTestBehavior.opaque,
+              onTap: () {
+                onSelect?.call();
+                onOpenEditor?.call();
+              },
               onLongPress: onSelect,
               onPanUpdate: onDragUpdate,
               child: Column(

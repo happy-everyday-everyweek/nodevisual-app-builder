@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../core/constants.dart';
 import '../../data/models/function_def.dart';
 import '../../data/models/node.dart';
 import 'connection_painter.dart';
@@ -149,6 +150,13 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
 
   void _onNodeDelete(String nodeId) {
     ref.read(graphMutatorProvider.notifier).removeNode(nodeId);
+  }
+
+  /// 单击节点 → 打开节点编辑页（数据平面入口）。
+  void _openNodeEditor(String nodeId) {
+    context.push(
+      AppConstants.nodeEditorRoute(widget.projectId, widget.functionId, nodeId),
+    );
   }
 
   // ---- 连线交互 ----
@@ -504,6 +512,7 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
                   node: node,
                   selected: node.id == selectedNodeId,
                   onSelect: () => _onNodeLongPress(node.id),
+                  onOpenEditor: () => _openNodeEditor(node.id),
                   onDelete: () => _onNodeDelete(node.id),
                   onDragUpdate: (details) =>
                       _onNodeDragUpdate(node.id, details),

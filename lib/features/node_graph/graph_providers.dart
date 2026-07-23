@@ -8,6 +8,7 @@ import '../../data/models/port.dart';
 import '../functions/function_providers.dart';
 import '../project/project_providers.dart';
 import 'dag_validator.dart';
+import 'node_kinds.dart';
 
 const Uuid _uuid = Uuid();
 
@@ -121,6 +122,30 @@ class GraphMutator extends Notifier<FunctionDef?> {
     _commit(fn.copyWith(nodes: newNodes));
   }
 
+  /// 一次性更新节点的 params / controlOutputs / dataOutputs（单次提交）。
+  ///
+  /// 节点编辑页在修改参数（可能同时引发动态 outputs 变化）时使用，
+  /// 避免多次分别提交导致的中间态与多余持久化。任一字段为 null 表示保持原值。
+  void updateNode(
+    String id, {
+    Map<String, dynamic>? params,
+    List<ControlOutput>? controlOutputs,
+    List<DataOutput>? dataOutputs,
+  }) {
+    final fn = _currentFunction;
+    if (fn == null) return;
+    final newNodes = fn.nodes
+        .map((n) => n.id == id
+            ? n.copyWith(
+                params: params ?? n.params,
+                controlOutputs: controlOutputs ?? n.controlOutputs,
+                dataOutputs: dataOutputs ?? n.dataOutputs,
+              )
+            : n,)
+        .toList(growable: false);
+    _commit(fn.copyWith(nodes: newNodes));
+  }
+
   // ---- 控制流边 ----
 
   /// 添加控制流边。
@@ -199,85 +224,15 @@ class GraphMutator extends Notifier<FunctionDef?> {
 
   /// 按 kind 生成默认节点（含默认 params、controlOutputs、dataOutputs）。
   ///
-  /// position 由调用方设置；此处的 id 已生成。
+  /// 优先委托 [NodeKindRegistry] / [createNodeForKind]（基础节点）；
+  /// db_* 与 plugin 尚未在注册表中登记，保留本地默认。
+  /// position 由调用方覆盖；id 已生成。
   static Node _createDefaultNode(String kind) {
+    if (NodeKindRegistry.isRegistered(kind)) {
+      return createNodeForKind(kind);
+    }
     final id = _uuid.v4();
     switch (kind) {
-      case 'if':
-        return Node(
-          id: id,
-          kind: kind,
-          params: const {'cases': ['true', 'false']},
-          position: const NodePosition(x: 0, y: 0),
-          controlOutputs: const [
-            ControlOutput(name: 'true'),
-            ControlOutput(name: 'false'),
-          ],
-        );
-      case 'loop':
-        return Node(
-          id: id,
-          kind: kind,
-          params: const {},
-          position: const NodePosition(x: 0, y: 0),
-          controlOutputs: const [
-            ControlOutput(name: 'body'),
-            ControlOutput(name: 'completed'),
-          ],
-          dataOutputs: const [
-            DataOutput(name: 'index', type: PortType.number),
-          ],
-        );
-      case 'variable_set':
-        return Node(
-          id: id,
-          kind: kind,
-          params: const {'varName': '', 'value': null},
-          position: const NodePosition(x: 0, y: 0),
-          controlOutputs: const [ControlOutput(name: 'next')],
-        );
-      case 'variable_get':
-        return Node(
-          id: id,
-          kind: kind,
-          params: const {'varName': ''},
-          position: const NodePosition(x: 0, y: 0),
-          controlOutputs: const [ControlOutput(name: 'next')],
-          dataOutputs: const [DataOutput(name: 'value', type: PortType.any)],
-        );
-      case 'arithmetic':
-        return Node(
-          id: id,
-          kind: kind,
-          params: const {'op': '+', 'a': null, 'b': null},
-          position: const NodePosition(x: 0, y: 0),
-          controlOutputs: const [ControlOutput(name: 'next')],
-          dataOutputs: const [
-            DataOutput(name: 'result', type: PortType.number),
-          ],
-        );
-      case 'logic':
-        return Node(
-          id: id,
-          kind: kind,
-          params: const {'op': '&&', 'a': null, 'b': null},
-          position: const NodePosition(x: 0, y: 0),
-          controlOutputs: const [ControlOutput(name: 'next')],
-          dataOutputs: const [
-            DataOutput(name: 'result', type: PortType.boolean),
-          ],
-        );
-      case 'string_op':
-        return Node(
-          id: id,
-          kind: kind,
-          params: const {'op': 'concat', 'a': null, 'b': null},
-          position: const NodePosition(x: 0, y: 0),
-          controlOutputs: const [ControlOutput(name: 'next')],
-          dataOutputs: const [
-            DataOutput(name: 'result', type: PortType.string),
-          ],
-        );
       case 'db_query':
         return Node(
           id: id,
@@ -302,15 +257,6 @@ class GraphMutator extends Notifier<FunctionDef?> {
           dataOutputs: const [
             DataOutput(name: 'affected', type: PortType.number),
           ],
-        );
-      case 'function_call':
-        return Node(
-          id: id,
-          kind: kind,
-          params: const {'targetFunctionId': ''},
-          position: const NodePosition(x: 0, y: 0),
-          controlOutputs: const [ControlOutput(name: 'next')],
-          dataOutputs: const [DataOutput(name: 'result', type: PortType.any)],
         );
       case 'plugin':
         return Node(

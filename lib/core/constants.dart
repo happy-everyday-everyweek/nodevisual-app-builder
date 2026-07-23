@@ -32,6 +32,18 @@ class AppConstants {
   static String functionEditorRoute(String projectId, String functionId) =>
       '/project/$projectId/function/$functionId';
 
+  /// 节点编辑页路由路径模板（含 :id / :fid / :nid 路径参数）。
+  static const String routeNodeEditor =
+      '/project/:id/function/:fid/node/:nid';
+
+  /// 拼接节点编辑页路由地址。
+  static String nodeEditorRoute(
+    String projectId,
+    String functionId,
+    String nodeId,
+  ) =>
+      '/project/$projectId/function/$functionId/node/$nodeId';
+
   // ---- 本地存储相关键名 ----
   /// SharedPreferences 中保存最近打开项目 id 的键。
   static const String prefKeyLastProjectId = 'last_project_id';

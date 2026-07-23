@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'core/constants.dart';
 import 'core/theme.dart';
 import 'features/node_graph/function_editor_screen.dart';
+import 'features/node_graph/node_editor_screen.dart';
 import 'presentation/screens/editor/editor_shell_screen.dart';
 import 'presentation/screens/home_screen.dart';
 
@@ -60,6 +61,22 @@ final GoRouter _router = GoRouter(
               functionId: functionId,
             );
           },
+          routes: <RouteBase>[
+            GoRoute(
+              path: 'node/:nid',
+              name: 'nodeEditor',
+              builder: (BuildContext context, GoRouterState state) {
+                final projectId = state.pathParameters['id']!;
+                final functionId = state.pathParameters['fid']!;
+                final nodeId = state.pathParameters['nid']!;
+                return NodeEditorScreen(
+                  projectId: projectId,
+                  functionId: functionId,
+                  nodeId: nodeId,
+                );
+              },
+            ),
+          ],
         ),
       ],
     ),
