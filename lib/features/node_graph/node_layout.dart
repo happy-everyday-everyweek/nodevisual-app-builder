@@ -26,8 +26,8 @@ class NodeLayout {
   /// 端口视觉圆点半径。
   static const double portRadius = 6;
 
-  /// 端口触控命中半径（移动端放大触控区）。
-  static const double portHitRadius = 18;
+  /// 端口触控命中半径（移动端放大触控区，44dp 命中区）。
+  static const double portHitRadius = 22;
 
   /// 控制流连线粗细。
   static const double connectionStrokeWidth = 3;

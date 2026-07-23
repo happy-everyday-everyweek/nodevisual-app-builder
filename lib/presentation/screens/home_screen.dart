@@ -75,15 +75,19 @@ class HomeScreen extends ConsumerWidget {
           ),
         ],
       ),
-      body: asyncList.when(
-        data: (list) => list.isEmpty
-            ? _EmptyState(theme: theme)
-            : _ProjectList(theme: theme, projects: list),
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, _) => Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Text('加载项目列表失败：$error'),
+      body: SafeArea(
+        // 适配 Android 手势导航条 / edge-to-edge
+        bottom: false,
+        child: asyncList.when(
+          data: (list) => list.isEmpty
+              ? _EmptyState(theme: theme)
+              : _ProjectList(theme: theme, projects: list),
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (error, _) => Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text('加载项目列表失败：$error'),
+            ),
           ),
         ),
       ),

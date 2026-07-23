@@ -199,12 +199,16 @@ class NodeCard extends StatelessWidget {
           ),
           if (onDelete != null) ...[
             const SizedBox(width: 4),
-            InkWell(
-              onTap: onDelete,
-              customBorder: const CircleBorder(),
-              child: Padding(
-                padding: const EdgeInsets.all(2),
-                child: Icon(Icons.close, size: 12, color: cs.error),
+            // 触控目标 >= 28dp（节点内紧凑场景），用 IconButton 保证命中区
+            SizedBox(
+              width: 28,
+              height: 28,
+              child: IconButton(
+                onPressed: onDelete,
+                icon: Icon(Icons.close, size: 14, color: cs.error),
+                padding: EdgeInsets.zero,
+                splashRadius: 16,
+                tooltip: '删除节点',
               ),
             ),
           ],

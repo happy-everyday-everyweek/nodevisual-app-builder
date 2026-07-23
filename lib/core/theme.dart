@@ -46,8 +46,34 @@ class AppTheme {
           borderRadius: BorderRadius.circular(12),
         ),
       ),
+      // 触控友好：不强制 dense（保留默认行高，确保 >=48dp 命中区）。
       listTileTheme: const ListTileThemeData(
-        dense: true,
+        minVerticalPadding: 8,
+      ),
+      // 触控目标最小化：IconButton 默认 48dp 命中区。
+      iconButtonTheme: IconButtonThemeData(
+        style: IconButton.styleFrom(
+          tapTargetSize: MaterialTapTargetSize.padded,
+        ),
+      ),
+      // 按钮默认 minimumSize 满足触控目标。
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          minimumSize: const Size(48, 48),
+          tapTargetSize: MaterialTapTargetSize.padded,
+        ),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          minimumSize: const Size(48, 48),
+          tapTargetSize: MaterialTapTargetSize.padded,
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(48, 48),
+          tapTargetSize: MaterialTapTargetSize.padded,
+        ),
       ),
       dividerTheme: DividerThemeData(
         space: 1,
