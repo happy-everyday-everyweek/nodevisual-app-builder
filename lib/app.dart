@@ -6,6 +6,7 @@ import 'core/constants.dart';
 import 'core/theme.dart';
 import 'features/node_graph/function_editor_screen.dart';
 import 'features/node_graph/node_editor_screen.dart';
+import 'presentation/screens/build/build_screen.dart';
 import 'presentation/screens/editor/editor_shell_screen.dart';
 import 'presentation/screens/home_screen.dart';
 
@@ -77,6 +78,14 @@ final GoRouter _router = GoRouter(
               },
             ),
           ],
+        ),
+        GoRoute(
+          path: 'build',
+          name: 'build',
+          builder: (BuildContext context, GoRouterState state) {
+            final projectId = state.pathParameters['id']!;
+            return BuildScreen(projectId: projectId);
+          },
         ),
       ],
     ),

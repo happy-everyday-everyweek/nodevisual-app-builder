@@ -44,6 +44,12 @@ class AppConstants {
   ) =>
       '/project/$projectId/function/$functionId/node/$nodeId';
 
+  /// 编译打包页路由路径模板（含 :id 路径参数）。
+  static const String routeBuild = '/project/:id/build';
+
+  /// 拼接编译打包页路由地址。
+  static String buildRoute(String projectId) => '/project/$projectId/build';
+
   // ---- 本地存储相关键名 ----
   /// SharedPreferences 中保存最近打开项目 id 的键。
   static const String prefKeyLastProjectId = 'last_project_id';
