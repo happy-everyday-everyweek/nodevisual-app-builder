@@ -71,6 +71,10 @@ class WebRuntimeTemplate {
     }
   }
 
+  // 列表组件注册表：uiNodeId -> { el, uiNode }。
+  // 当页面函数 outputs 就绪后，重新渲染依赖该 outputs 的列表组件。
+  const LIST_REGISTRY = new Map();
+
   // ====== # 引用解析 ======
   function resolveRef(value, scope) {
     if (value && typeof value === "object" && value.ref) {
@@ -85,6 +89,22 @@ class WebRuntimeTemplate {
       return undefined;
     }
     return value;
+  }
+
+  // 组件上下文栈（运行时按组件树位置注入）。
+  // 每项 = { componentId, fields: Map<String, any> }。
+  // list_vertical/horizontal 注入 {item, index}；slider/switch 注入 {value}；
+  // tab_container 注入 {tab}。子组件通过 #component 引用读取。
+  const COMPONENT_CONTEXT_STACK = [];
+
+  function pushComponentContext(ctx) { COMPONENT_CONTEXT_STACK.push(ctx); }
+  function popComponentContext() { COMPONENT_CONTEXT_STACK.pop(); }
+  function findComponentContext(componentId) {
+    for (let i = COMPONENT_CONTEXT_STACK.length - 1; i >= 0; i--) {
+      const c = COMPONENT_CONTEXT_STACK[i];
+      if (c.componentId === componentId) return c;
+    }
+    return null;
   }
 
   // ====== 节点执行 ======
@@ -140,7 +160,14 @@ class WebRuntimeTemplate {
       steps++;
       const result = await executeNode(node, func, scope);
       if (result.error) return { error: result.error };
-      if (result.return !== undefined) return { outputs: result.return };
+      if (result.return !== undefined) {
+        // 多返回值（map）：按 outputs 名直接返回，供调用方按名读取。
+        if (result.return !== null && typeof result.return === "object" && !Array.isArray(result.return)) {
+          return { outputs: result.return };
+        }
+        // 单返回值（向后兼容）：封装为 { value: v }。
+        return { outputs: { value: result.return } };
+      }
       // 记录节点所有 dataOutputs 到 scope
       if (node.dataOutputs) {
         for (const out of node.dataOutputs) {
@@ -270,6 +297,15 @@ class WebRuntimeTemplate {
         return { outputs: { result: r.outputs } };
       }
       case "return": {
+        // 多返回值（新格式）：values 为 map<name, ref>，按函数 outputs 名映射。
+        if (params.values && typeof params.values === "object") {
+          const out = {};
+          Object.keys(params.values).forEach(k => {
+            out[k] = resolveRef(params.values[k], scope);
+          });
+          return { return: out };
+        }
+        // 单返回值（向后兼容）：value 字段。
         const v = resolveRef(params.value, scope);
         return { return: v };
       }
@@ -292,11 +328,20 @@ class WebRuntimeTemplate {
 
   // ====== UI 渲染 ======
   function renderUI() {
-    if (!PROJECT || !PROJECT.ui || !PROJECT.ui.tree) return;
+    if (!PROJECT || !PROJECT.ui) return;
     const root = document.getElementById("app-root");
     if (!root) return;
     root.innerHTML = "";
-    const uiRoot = PROJECT.ui.tree;
+    // PROJECT.ui 为顶层 UI 节点数组。v1 渲染首个根（或首个标记为 home 的 Page
+    // 关联的根）。后续页面切换由 SPA 路由处理（待实现）。
+    const roots = Array.isArray(PROJECT.ui) ? PROJECT.ui : (PROJECT.ui.tree ? [PROJECT.ui.tree] : []);
+    if (roots.length === 0) return;
+    const firstPageId = (PROJECT.pages && PROJECT.pages.length > 0) ? PROJECT.pages[0].id : null;
+    let uiRoot = roots[0];
+    if (firstPageId) {
+      const matched = roots.find(r => r.pageId === firstPageId);
+      if (matched) uiRoot = matched;
+    }
     const el = renderNode(uiRoot, null);
     if (el) root.appendChild(el);
   }
@@ -318,7 +363,14 @@ class WebRuntimeTemplate {
         el.style.gap = (uiNode.props.gap || 8) + "px";
         break;
       case "Container":
+      case "card":
         el = document.createElement("div");
+        if (uiNode.type === "card") {
+          el.style.border = "1px solid #e0e0e0";
+          el.style.borderRadius = "8px";
+          el.style.padding = "12px";
+          el.style.boxShadow = "0 1px 3px rgba(0,0,0,0.08)";
+        }
         if (uiNode.props.padding) el.style.padding = uiNode.props.padding + "px";
         if (uiNode.props.color) el.style.backgroundColor = uiNode.props.color;
         if (uiNode.props.width) el.style.width = uiNode.props.width + "px";
@@ -331,7 +383,12 @@ class WebRuntimeTemplate {
         if (uiNode.props.color) el.style.color = uiNode.props.color;
         if (uiNode.props.fontWeight) el.style.fontWeight = uiNode.props.fontWeight;
         break;
+      case "rich_text":
+        el = document.createElement("div");
+        el.innerHTML = String(uiNode.props.text || "");
+        break;
       case "ElevatedButton":
+      case "button":
         el = document.createElement("button");
         el.textContent = String(uiNode.props.label || "Button");
         if (uiNode.props.onTap) {
@@ -339,6 +396,7 @@ class WebRuntimeTemplate {
         }
         break;
       case "TextField":
+      case "text_field":
         el = document.createElement("input");
         el.type = "text";
         el.placeholder = String(uiNode.props.placeholder || "");
@@ -348,9 +406,103 @@ class WebRuntimeTemplate {
         if (uiNode.props.src) el.src = uiNode.props.src;
         el.alt = String(uiNode.props.alt || "");
         break;
+      case "video":
+        el = document.createElement("video");
+        if (uiNode.props.src) el.src = uiNode.props.src;
+        el.controls = true;
+        break;
       case "Scaffold":
         el = document.createElement("div");
         break;
+      case "slider": {
+        el = document.createElement("input");
+        el.type = "range";
+        const sMin = Number(uiNode.props.min ?? 0);
+        const sMax = Number(uiNode.props.max ?? 100);
+        const sVal = Number(uiNode.props.value ?? sMin);
+        el.min = sMin;
+        el.max = sMax;
+        el.value = sVal;
+        // 滑块当前值作为组件上下文提供给子节点 #value 引用。
+        el._componentContext = { componentId: uiNode.id, fields: { value: sVal } };
+        if (uiNode.props.onChanged) {
+          el.addEventListener("input", () => {
+            const v = Number(el.value);
+            if (el._componentContext) el._componentContext.fields.value = v;
+            triggerFunction(uiNode.props.onChanged);
+          });
+        }
+        break;
+      }
+      case "switch":
+        el = document.createElement("input");
+        el.type = "checkbox";
+        el.checked = !!uiNode.props.value;
+        el._componentContext = { componentId: uiNode.id, fields: { value: !!uiNode.props.value } };
+        break;
+      case "checkbox":
+        el = document.createElement("input");
+        el.type = "checkbox";
+        el.checked = !!uiNode.props.value;
+        break;
+      case "progress": {
+        el = document.createElement("div");
+        el.style.height = "4px";
+        el.style.background = "#e0e0e0";
+        el.style.borderRadius = "2px";
+        const inner = document.createElement("div");
+        inner.style.height = "100%";
+        inner.style.background = "#6200ee";
+        inner.style.width = (Number(uiNode.props.value ?? 0) * 100) + "%";
+        el.appendChild(inner);
+        break;
+      }
+      case "badge":
+        el = document.createElement("span");
+        el.style.background = "#6200ee";
+        el.style.color = "white";
+        el.style.padding = "2px 8px";
+        el.style.borderRadius = "10px";
+        el.style.fontSize = "11px";
+        el.textContent = String(uiNode.props.text || "");
+        break;
+      case "divider":
+        el = document.createElement("hr");
+        break;
+      case "spacer":
+        el = document.createElement("div");
+        if (uiNode.props.width) el.style.width = uiNode.props.width + "px";
+        if (uiNode.props.height) el.style.height = uiNode.props.height + "px";
+        break;
+      case "icon":
+        el = document.createElement("span");
+        el.textContent = String(uiNode.props.name || "•");
+        break;
+      case "list_vertical":
+      case "list_horizontal": {
+        el = document.createElement("div");
+        el.style.border = "1px solid #e0e0e0";
+        el.style.borderRadius = "8px";
+        el.style.padding = "8px";
+        el.style.display = "flex";
+        el.style.flexDirection = uiNode.type === "list_vertical" ? "column" : "row";
+        el.style.gap = "8px";
+        el.style.overflow = uiNode.type === "list_horizontal" ? "auto" : "visible";
+        // items 绑定 → 数组；渲染时为每项复制 children 并注入 item/index 上下文。
+        el._isListComponent = true;
+        el._listUiNode = uiNode;
+        break;
+      }
+      case "tab_container": {
+        el = document.createElement("div");
+        el.style.border = "1px solid #e0e0e0";
+        el.style.borderRadius = "8px";
+        el.style.overflow = "hidden";
+        el._isTabComponent = true;
+        el._tabUiNode = uiNode;
+        el._tabIndex = 0;
+        break;
+      }
       default:
         el = document.createElement("div");
         el.setAttribute("data-type", uiNode.type);
@@ -375,14 +527,62 @@ class WebRuntimeTemplate {
       setTimeout(() => triggerFunction(uiNode.props.onLoad), 0);
     }
 
-    // 子节点
-    if (uiNode.children) {
+    // 子节点 / 容器组件渲染
+    if (el._isListComponent) {
+      renderListChildren(el, uiNode);
+    } else if (el._isTabComponent) {
+      renderTabChildren(el, uiNode);
+    } else if (uiNode.children) {
+      // 容器组件（slider/switch）向子节点注入组件上下文。
+      if (el._componentContext) {
+        pushComponentContext(el._componentContext);
+      }
       uiNode.children.forEach(child => {
         const childEl = renderNode(child, el);
         if (childEl) el.appendChild(childEl);
       });
+      if (el._componentContext) {
+        popComponentContext();
+      }
     }
     return el;
+  }
+
+  // 渲染列表子节点：按 items 绑定值展开，为每项复制 children 模板并注入 item/index。
+  function renderListChildren(el, uiNode) {
+    let items = [];
+    if (uiNode.bindings && uiNode.bindings.items) {
+      const v = readBindingValue(uiNode.bindings.items.ref);
+      if (Array.isArray(v)) items = v;
+    }
+    // 注册列表组件，便于页面函数 outputs 就绪后重新渲染。
+    if (uiNode.id) {
+      LIST_REGISTRY.set(uiNode.id, { el: el, uiNode: uiNode });
+    }
+    // 清空已有子节点（重新渲染时使用）。
+    while (el.firstChild) el.removeChild(el.firstChild);
+    if (!uiNode.children || uiNode.children.length === 0) return;
+    const template = uiNode.children[0]; // v1：取第一个子节点作为模板
+    items.forEach((item, index) => {
+      const ctx = { componentId: uiNode.id, fields: { item: item, index: index } };
+      pushComponentContext(ctx);
+      const cloned = JSON.parse(JSON.stringify(template));
+      const childEl = renderNode(cloned, el);
+      if (childEl) el.appendChild(childEl);
+      popComponentContext();
+    });
+  }
+
+  // 渲染 Tab 子节点：v1 仅渲染当前 Tab。
+  function renderTabChildren(el, uiNode) {
+    if (!uiNode.children || uiNode.children.length === 0) return;
+    const idx = el._tabIndex || 0;
+    if (idx >= uiNode.children.length) return;
+    const ctx = { componentId: uiNode.id, fields: { tab: idx } };
+    pushComponentContext(ctx);
+    const childEl = renderNode(uiNode.children[idx], el);
+    if (childEl) el.appendChild(childEl);
+    popComponentContext();
   }
 
   function applyBindings(el, uiNode) {
@@ -442,8 +642,26 @@ class WebRuntimeTemplate {
     }
     if (ref.source === "funcVar") return undefined;
     if (ref.source === "upstream") return undefined;
-    if (ref.source === "component") return undefined; // 由容器运行时注入，v1 不支持。
+    // 组件上下文变量：从栈中查找匹配的组件上下文，按 fieldName 取字段。
+    // 形如 'item' / 'index' / 'value' / 'tab' / 'item.name'（嵌套字段用点分隔）。
+    if (ref.source === "component") {
+      const ctx = ref.componentId ? findComponentContext(ref.componentId) : null;
+      if (!ctx) return undefined;
+      return readComponentField(ctx, ref.fieldName);
+    }
     return undefined;
+  }
+
+  // 解析组件上下文字段：支持 'item' / 'index' / 'item.name' 等点分隔路径。
+  function readComponentField(ctx, fieldName) {
+    if (!fieldName) return ctx.fields;
+    const parts = String(fieldName).split(".");
+    let cur = ctx.fields;
+    for (const p of parts) {
+      if (cur == null || typeof cur !== "object") return undefined;
+      cur = cur[p];
+    }
+    return cur;
   }
 
   async function triggerFunction(funcIdOrName) {
@@ -544,6 +762,16 @@ class WebRuntimeTemplate {
         if (e.ref && e.ref.source === "funcVar" && e.ref.isPageFunc && e.ref.funcId === funcId) {
           const v = readBindingValue(e.ref);
           if (v !== undefined) applyProp(e.el, e.propName, v);
+        }
+      }
+    });
+    // 重新渲染依赖该函数 outputs 的列表组件（items 绑定可能引用页面函数 outputs）。
+    LIST_REGISTRY.forEach(entry => {
+      const uiNode = entry.uiNode;
+      if (uiNode.bindings && uiNode.bindings.items) {
+        const ref = uiNode.bindings.items.ref;
+        if (ref && ref.source === "funcVar" && ref.isPageFunc && ref.funcId === funcId) {
+          renderListChildren(entry.el, uiNode);
         }
       }
     });
