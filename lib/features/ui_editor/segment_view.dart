@@ -201,7 +201,7 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
           children: [
             Icon(Icons.widgets_outlined,
                 size: 48, color: theme.colorScheme.onSurfaceVariant,),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             Text(
               '画布为空，点击 + 添加组件',
               style: theme.textTheme.bodyMedium
@@ -212,22 +212,34 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
       );
     }
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(20),
       child: Center(
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Container(
-            decoration: BoxDecoration(
-              color: theme.colorScheme.surface,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: theme.colorScheme.outlineVariant),
-            ),
-            padding: const EdgeInsets.all(8),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: project.ui
-                  .map((n) => _renderNode(theme, n, selectedId))
-                  .toList(growable: false),
+          constraints: const BoxConstraints(maxWidth: 440),
+          child: AnimatedSize(
+            duration: const Duration(milliseconds: 240),
+            reverseDuration: const Duration(milliseconds: 200),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 200),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              child: Container(
+                key: ValueKey(project.ui.length),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: theme.colorScheme.outlineVariant),
+                ),
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: project.ui
+                      .map((n) => _renderNode(theme, n, selectedId))
+                      .toList(growable: false),
+                ),
+              ),
             ),
           ),
         ),
@@ -590,13 +602,16 @@ class _SelectionWrapper extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
       onLongPress: onLongPress,
-      child: DecoratedBox(
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        reverseDuration: const Duration(milliseconds: 160),
+        curve: Curves.easeOutCubic,
         decoration: BoxDecoration(
           border: Border.all(
             color: selected ? color.primary : Colors.transparent,
-            width: 2,
+            width: 1.5,
           ),
-          borderRadius: BorderRadius.circular(2),
+          borderRadius: BorderRadius.circular(6),
         ),
         child: child,
       ),
@@ -678,22 +693,31 @@ class _ComponentChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final cs = theme.colorScheme;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
-      child: Container(
-        width: 88,
-        padding: const EdgeInsets.symmetric(vertical: 12),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 140),
+        width: 92,
+        padding: const EdgeInsets.symmetric(vertical: 14),
         decoration: BoxDecoration(
-          color: theme.colorScheme.surfaceContainerHigh,
+          color: cs.surfaceContainerHigh,
           borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: cs.outlineVariant, width: 0.75),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(def.icon, color: theme.colorScheme.primary),
-            const SizedBox(height: 4),
-            Text(def.name, style: theme.textTheme.labelSmall),
+            Icon(def.icon, color: cs.onSurfaceVariant, size: 22),
+            const SizedBox(height: 6),
+            Text(
+              def.name,
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: cs.onSurface,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
           ],
         ),
       ),

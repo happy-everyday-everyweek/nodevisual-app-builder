@@ -470,29 +470,63 @@ class _InstallButtonState extends ConsumerState<_InstallButton> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    // 状态：done（已安装）→ check / installing → spinner / idle → download
+    final Widget content;
     if (widget.isInstalled && !_installing) {
-      return Icon(Icons.check_circle,
-          color: theme.colorScheme.primary, size: 28);
+      content = Icon(Icons.check_circle, color: cs.primary, size: 28);
+    } else if (_installing) {
+      content = const Padding(
+        padding: EdgeInsets.all(2),
+        child: SizedBox(
+          width: 24,
+          height: 24,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    } else {
+      content = IconButton(
+        onPressed: _install,
+        icon: const Icon(Icons.download, size: 18),
+        padding: EdgeInsets.zero,
+        splashRadius: 16,
+        tooltip: '安装',
+        style: IconButton.styleFrom(
+          backgroundColor: cs.primaryContainer,
+          foregroundColor: cs.primary,
+        ),
+      );
     }
-    return SizedBox(
-      width: 28,
-      height: 28,
-      child: _installing
-          ? const Padding(
-              padding: EdgeInsets.all(2),
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : IconButton(
-              onPressed: _install,
-              icon: const Icon(Icons.download, size: 18),
-              padding: EdgeInsets.zero,
-              splashRadius: 16,
-              tooltip: '安装',
-              style: IconButton.styleFrom(
-                backgroundColor: theme.colorScheme.primaryContainer,
-                foregroundColor: theme.colorScheme.primary,
-              ),
-            ),
+
+    // AnimatedSwitcher 实现 download → spinner → check 的原路反向切换。
+    // key 区分三态；退回时（如取消选中）同样按反向曲线恢复。
+    final stateKey = widget.isInstalled && !_installing
+        ? const ValueKey('done')
+        : _installing
+            ? const ValueKey('loading')
+            : const ValueKey('idle');
+
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 220),
+      reverseDuration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.center,
+      child: SizedBox(
+        width: 28,
+        height: 28,
+        child: AnimatedSwitcher(
+          duration: const Duration(milliseconds: 200),
+          reverseDuration: const Duration(milliseconds: 180),
+          switchInCurve: Curves.easeOutCubic,
+          switchOutCurve: Curves.easeInCubic,
+          transitionBuilder: (child, anim) => FadeTransition(
+            opacity: anim,
+            child: ScaleTransition(scale: anim, child: child),
+          ),
+          child: KeyedSubtree(key: stateKey, child: content),
+        ),
+      ),
     );
   }
 

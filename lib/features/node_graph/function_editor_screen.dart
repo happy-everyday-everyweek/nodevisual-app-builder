@@ -607,18 +607,17 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
     final kinds = [...baseKinds, ...pluginKinds];
 
     return SizedBox(
-      height: 84,
+      height: 88,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 4),
         itemCount: kinds.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 6),
+        separatorBuilder: (_, __) => const SizedBox(width: 8),
         itemBuilder: (context, i) {
           final entry = kinds[i];
           return _PaletteButton(
             entry: entry,
-            color: entry.kind.startsWith('plugin_')
-                ? theme.colorScheme.tertiary
-                : theme.colorScheme.primary,
+            isPlugin: entry.kind.startsWith('plugin_'),
             onTap: () => _addNodeOfKind(entry.kind),
           );
         },
@@ -732,48 +731,80 @@ class _NodeKindEntry {
 }
 
 /// 面板按钮。
-class _PaletteButton extends StatelessWidget {
+///
+/// 极简风：插件与基础节点统一灰阶，仅通过描边样式区分（插件节点用虚线感
+/// 的浅描边+斜角图标）。点击有缩放反馈（原路反向恢复）。
+class _PaletteButton extends StatefulWidget {
   const _PaletteButton({
     required this.entry,
-    required this.color,
+    required this.isPlugin,
     required this.onTap,
   });
 
   final _NodeKindEntry entry;
-  final Color color;
+  final bool isPlugin;
   final VoidCallback onTap;
+
+  @override
+  State<_PaletteButton> createState() => _PaletteButtonState();
+}
+
+class _PaletteButtonState extends State<_PaletteButton> {
+  bool _pressed = false;
+
+  void _setPressed(bool v) {
+    if (_pressed != v) setState(() => _pressed = v);
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Material(
-      color: theme.colorScheme.surfaceContainer,
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: SizedBox(
-          width: 76,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(entry.icon, size: 22, color: color),
-                const SizedBox(height: 4),
-                Text(
-                  entry.label,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w500,
-                  ),
-                  textAlign: TextAlign.center,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+    final cs = theme.colorScheme;
+    return GestureDetector(
+      onTapDown: (_) => _setPressed(true),
+      onTapUp: (_) => _setPressed(false),
+      onTapCancel: () => _setPressed(false),
+      onTap: widget.onTap,
+      child: AnimatedScale(
+        scale: _pressed ? 0.94 : 1.0,
+        duration: const Duration(milliseconds: 120),
+        reverseDuration: const Duration(milliseconds: 160),
+        curve: Curves.easeOutCubic,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeOutCubic,
+          width: 80,
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+          decoration: BoxDecoration(
+            color: cs.surfaceContainerHigh,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: widget.isPlugin ? cs.outline : cs.outlineVariant,
+              width: widget.isPlugin ? 1 : 0.75,
             ),
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                widget.entry.icon,
+                size: 22,
+                color: widget.isPlugin ? cs.onSurface : cs.onSurfaceVariant,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                widget.entry.label,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  fontSize: 11,
+                  fontWeight: widget.isPlugin ? FontWeight.w600 : FontWeight.w500,
+                  color: cs.onSurface,
+                ),
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
           ),
         ),
       ),

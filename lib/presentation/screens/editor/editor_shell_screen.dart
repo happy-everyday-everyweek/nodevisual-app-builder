@@ -93,18 +93,42 @@ class _EditorShellScreenState extends ConsumerState<EditorShellScreen> {
       );
     }
 
+    // 三段切换：使用 AnimatedSwitcher 实现淡入淡出 + 轻微位移（原路反向）。
+    // IndexedStack 保活所有子 widget state；外层 AnimatedSwitcher 仅做切换过渡。
+    final children = const [
+      FunctionsSegmentView(),
+      DatabaseSegmentView(),
+      UiEditorSegmentView(),
+    ];
+
     return Scaffold(
       body: Stack(
         children: [
-          // 三段内容区，IndexedStack 保活所有子 widget 的 state。
           Positioned.fill(
-            child: IndexedStack(
-              index: segment.index,
-              children: const [
-                FunctionsSegmentView(),
-                DatabaseSegmentView(),
-                UiEditorSegmentView(),
-              ],
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 220),
+              reverseDuration: const Duration(milliseconds: 180),
+              switchInCurve: Curves.easeOutCubic,
+              switchOutCurve: Curves.easeInCubic,
+              transitionBuilder: (child, anim) {
+                return FadeTransition(
+                  opacity: anim,
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0, 0.04),
+                      end: Offset.zero,
+                    ).animate(anim),
+                    child: child,
+                  ),
+                );
+              },
+              child: KeyedSubtree(
+                key: ValueKey(segment.index),
+                child: IndexedStack(
+                  index: segment.index,
+                  children: children,
+                ),
+              ),
             ),
           ),
           // 悬浮胶囊 Top 栏，覆盖于内容之上。

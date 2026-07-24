@@ -11,8 +11,9 @@ import '../../features/project/project_providers.dart';
 /// 视觉特征：
 /// - 圆角胶囊（BorderRadius.circular(28)）；
 /// - 半透明背景 + 背景模糊（glassmorphism），主题自适应；
-/// - Material 阴影，悬浮于内容之上；
+/// - 无阴影（极简风，使用描边替代）；
 /// - 当前选中段填充主色高亮，未选中段透明；
+/// - 切换动画：300ms easeOutCubic（正向）/ easeInCubic（反向）；
 /// - 高度约 56，按钮触控区充足，移动端友好。
 ///
 /// 通过 [SafeArea] 适配状态栏，使用 [Stack]+[Positioned] 悬浮（不挤压内容区）。
@@ -22,6 +23,7 @@ class CapsuleTopBar extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final cs = theme.colorScheme;
     final current = ref.watch(currentSegmentProvider);
 
     return SafeArea(
@@ -30,26 +32,19 @@ class CapsuleTopBar extends ConsumerWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         child: Center(
           child: DecoratedBox(
-            // 外层负责阴影。
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(28),
-              boxShadow: const [
-                BoxShadow(
-                  color: Color(0x33000000),
-                  blurRadius: 12,
-                  offset: Offset(0, 4),
-                ),
-              ],
+              border: Border.all(color: cs.outlineVariant, width: 0.75),
             ),
             child: ClipRRect(
               borderRadius: BorderRadius.circular(28),
               child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
                 child: Container(
                   height: 56,
                   padding: const EdgeInsets.all(4),
                   decoration: BoxDecoration(
-                    color: theme.colorScheme.surface.withValues(alpha: 0.8),
+                    color: cs.surface.withValues(alpha: 0.85),
                     borderRadius: BorderRadius.circular(28),
                   ),
                   child: Row(
@@ -102,6 +97,7 @@ class _SegmentButton extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final cs = theme.colorScheme;
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -110,11 +106,12 @@ class _SegmentButton extends ConsumerWidget {
         },
         borderRadius: BorderRadius.circular(24),
         child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
+          duration: const Duration(milliseconds: 260),
+          reverseDuration: const Duration(milliseconds: 220),
           curve: Curves.easeOutCubic,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
           decoration: BoxDecoration(
-            color: selected ? theme.colorScheme.primary : Colors.transparent,
+            color: selected ? cs.primary : Colors.transparent,
             borderRadius: BorderRadius.circular(24),
           ),
           child: Row(
@@ -124,8 +121,8 @@ class _SegmentButton extends ConsumerWidget {
                 icon,
                 size: 18,
                 color: selected
-                    ? theme.colorScheme.onPrimary
-                    : theme.colorScheme.onSurfaceVariant,
+                    ? cs.onPrimary
+                    : cs.onSurfaceVariant,
               ),
               const SizedBox(width: 6),
               Text(
@@ -133,9 +130,7 @@ class _SegmentButton extends ConsumerWidget {
                 style: TextStyle(
                   fontSize: 14,
                   fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                  color: selected
-                      ? theme.colorScheme.onPrimary
-                      : theme.colorScheme.onSurfaceVariant,
+                  color: selected ? cs.onPrimary : cs.onSurfaceVariant,
                 ),
               ),
             ],
