@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/local/local_storage.dart';
+import '../../data/local/local_storage_factory.dart';
 import '../../data/models/project.dart';
 import '../../data/repositories/project_repository.dart';
 
@@ -9,11 +10,13 @@ import '../../data/repositories/project_repository.dart';
 /// 顶层胶囊 Top 栏据此切换 [EditorShellScreen] 的内容区。
 enum EditorSegment { functions, database, ui }
 
-/// 本地存储实例（基于 SQLite + 文件系统）。
+/// 本地存储实例（平台相关）。
 ///
 /// 作为单例 provider 暴露，仓库层依赖此 provider。
+/// - 非 Web 平台：[SqliteLocalStorage]（SQLite + 文件系统）。
+/// - Web 平台：[SharedPreferencesLocalStorage]（SharedPreferences / localStorage）。
 final localStorageProvider = Provider<LocalStorage>((ref) {
-  return SqliteLocalStorage();
+  return createLocalStorage();
 });
 
 /// 项目仓库 provider。

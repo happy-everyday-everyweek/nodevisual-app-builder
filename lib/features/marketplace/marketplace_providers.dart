@@ -3,9 +3,12 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../plugins/plugin_config_storage.dart';
+import '../plugins/plugin_config_storage_factory.dart';
 import '../plugins/plugin_registry.dart';
 import '../plugins/plugin_spec.dart';
 import 'http_plugin_executor.dart';
+import 'installed_plugin_store.dart';
+import 'installed_plugin_store_factory.dart';
 import 'marketplace_client.dart';
 import 'marketplace_entry.dart';
 import 'plugin_manifest.dart';
@@ -17,9 +20,12 @@ final marketplaceClientProvider = Provider<MarketplaceClient>((ref) {
   return client;
 });
 
-/// 已安装插件存储 provider（全局单例）。
+/// 已安装插件存储 provider（全局单例，平台相关）。
+///
+/// - 非 Web 平台：基于文件系统（path_provider）。
+/// - Web 平台：基于 SharedPreferences（localStorage）。
 final installedPluginStoreProvider = Provider<InstalledPluginStore>((ref) {
-  return InstalledPluginStore();
+  return createInstalledPluginStore();
 });
 
 /// 已安装插件清单列表 provider。

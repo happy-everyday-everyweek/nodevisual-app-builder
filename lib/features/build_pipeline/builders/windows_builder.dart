@@ -101,7 +101,7 @@ class WindowsBuilder with BuilderUtils implements PlatformBuilder {
 
     return BuildArtifact(
       target: BuildTarget.windows,
-      file: nvexePath,
+      path: nvexePath.path,
       displayName: '${project.meta.name}-windows.nvexe',
       sizeBytes: nvexePath.lengthSync(),
       builtAt: DateTime.now().toIso8601String(),
