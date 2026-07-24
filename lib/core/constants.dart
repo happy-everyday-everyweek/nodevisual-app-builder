@@ -19,6 +19,9 @@ class AppConstants {
   static const String routeEditor = '/editor';
   static const String routeSettings = '/settings';
 
+  /// 插件市场路由路径。
+  static const String routeMarketplace = '/marketplace';
+
   /// 项目编辑器路由路径模板（含 :id 路径参数）。
   static const String routeProject = '/project/:id';
 
