@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/entry.dart';
+import '../../data/models/page.dart';
 import '../../data/models/port.dart';
 import '../../data/models/project.dart';
 import '../../data/models/ui_tree.dart';
@@ -127,14 +128,15 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
         Expanded(
           child: _buildCanvas(theme, project, selectedId),
         ),
-        if (selectedNode != null)
-          SizedBox(
-            width: 300,
-            child: Material(
-              color: theme.colorScheme.surfaceContainerLow,
-              child: PropertiesPanel(node: selectedNode),
-            ),
+        SizedBox(
+          width: 300,
+          child: Material(
+            color: theme.colorScheme.surfaceContainerLow,
+            child: selectedNode != null
+                ? PropertiesPanel(node: selectedNode)
+                : PagePanel(project: project),
           ),
+        ),
       ],
     );
   }
@@ -1938,4 +1940,281 @@ class _SectionHeader extends StatelessWidget {
       ),
     );
   }
+}
+
+// ============================================================================
+// 页面管理面板（T21-T22）
+// ============================================================================
+
+/// 页面管理面板：页面列表 + 页面事件绑定。
+///
+/// 在宽屏布局中，当未选中任何 UI 组件时显示在右侧面板。
+/// 可新建页面、设置首页、绑定页面生命周期事件（onLoad/onDispose 等）到函数。
+class PagePanel extends ConsumerWidget {
+  const PagePanel({super.key, required this.project});
+
+  final Project project;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final pages = project.pages;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.pages, size: 18, color: theme.colorScheme.primary),
+              const SizedBox(width: 6),
+              Text('页面', style: theme.textTheme.titleSmall),
+              const Spacer(),
+              IconButton(
+                tooltip: '新建页面',
+                icon: const Icon(Icons.add, size: 20),
+                onPressed: () => _addPage(context, ref),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '页面是 UI 的命名根，承载页面级触发（onLoad/onDispose）与页面作用域函数变量。',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 8),
+          if (pages.isEmpty)
+            _EmptyHint(text: '暂无页面，点击 + 新建', theme: theme)
+          else
+            for (final pg in pages)
+              _PageCard(page: pg, project: project),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _addPage(BuildContext context, WidgetRef ref) async {
+    final name = await _promptString(context, title: '新建页面', hint: '页面名');
+    if (name == null || name.trim().isEmpty) return;
+    ref.read(uiMutatorProvider.notifier).addPage(name.trim());
+  }
+}
+
+/// 单个页面卡片：展示页面信息 + 事件绑定。
+class _PageCard extends ConsumerWidget {
+  const _PageCard({required this.page, required this.project});
+
+  final Page page;
+  final Project project;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final mutator = ref.read(uiMutatorProvider.notifier);
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: theme.colorScheme.outlineVariant, width: 0.75),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 10, 8, 4),
+            child: Row(
+              children: [
+                Icon(page.isHome ? Icons.home : Icons.article_outlined,
+                    size: 16, color: theme.colorScheme.primary),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    page.name,
+                    style: theme.textTheme.labelLarge?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (page.isHome)
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: theme.colorScheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text('首页',
+                        style: theme.textTheme.labelSmall
+                            ?.copyWith(fontWeight: FontWeight.w600)),
+                  ),
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert, size: 18),
+                  onSelected: (v) {
+                    switch (v) {
+                      case 'home':
+                        mutator.updatePage(page.id, isHome: true);
+                      case 'rename':
+                        _rename(context, ref);
+                      case 'delete':
+                        mutator.removePage(page.id);
+                    }
+                  },
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'home', child: Text('设为首页')),
+                    PopupMenuItem(value: 'rename', child: Text('重命名')),
+                    PopupMenuItem(value: 'delete', child: Text('删除')),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('页面事件',
+                    style: theme.textTheme.labelSmall
+                        ?.copyWith(color: theme.colorScheme.primary)),
+                const SizedBox(height: 4),
+                for (final event in PageEventName.all)
+                  _PageEventRow(
+                    pageId: page.id,
+                    event: event,
+                    project: project,
+                  ),
+                if (page.rootUiNodeId == null)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4),
+                    child: Text(
+                      '提示：将一个 UI 根节点关联到此页面以启用页面级触发。',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.outline,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _rename(BuildContext context, WidgetRef ref) async {
+    final name = await _promptString(context,
+        title: '重命名页面', hint: '页面名', initial: page.name);
+    if (name == null || name.trim().isEmpty) return;
+    ref.read(uiMutatorProvider.notifier).updatePage(page.id, name: name.trim());
+  }
+}
+
+/// 页面事件绑定行：选择触发的函数。
+class _PageEventRow extends ConsumerWidget {
+  const _PageEventRow({
+    required this.pageId,
+    required this.event,
+    required this.project,
+  });
+
+  final String pageId;
+  final String event;
+  final Project project;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final mutator = ref.read(uiMutatorProvider.notifier);
+    final currentFuncId = mutator.getPageEventFunctionId(pageId, event);
+    final functions = project.functions;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 80,
+            child: Text(event, style: theme.textTheme.bodySmall),
+          ),
+          Expanded(
+            child: DropdownButtonFormField<String>(
+              isDense: true,
+              initialValue:
+                  functions.any((f) => f.id == currentFuncId) ? currentFuncId : null,
+              decoration: InputDecoration(
+                isDense: true,
+                hintText: '未绑定',
+                border: const OutlineInputBorder(),
+                contentPadding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              ),
+              items: [
+                for (final f in functions)
+                  DropdownMenuItem(value: f.id, child: Text(f.name)),
+              ],
+              onChanged: (v) =>
+                  mutator.setPageEventFunction(pageId, event, v),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EmptyHint extends StatelessWidget {
+  const _EmptyHint({required this.text, required this.theme});
+
+  final String text;
+  final ThemeData theme;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Center(
+        child: Text(text, style: TextStyle(color: theme.colorScheme.outline)),
+      ),
+    );
+  }
+}
+
+/// 弹出输入框获取字符串。
+Future<String?> _promptString(
+  BuildContext context, {
+  required String title,
+  required String hint,
+  String initial = '',
+}) {
+  final controller = TextEditingController(text: initial);
+  return showDialog<String>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text(title),
+      content: TextField(
+        controller: controller,
+        autofocus: true,
+        decoration: InputDecoration(
+          hintText: hint,
+          border: const OutlineInputBorder(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(ctx, controller.text),
+          child: const Text('确定'),
+        ),
+      ],
+    ),
+  );
 }
