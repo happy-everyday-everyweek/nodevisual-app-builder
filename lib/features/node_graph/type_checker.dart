@@ -24,6 +24,8 @@ class TypeCheckResult {
 ///   节点，再查其 [DataOutput] 名为 [VariableRef.outputName] 的类型。
 /// - [VariableSource.funcVar]：在 [functionDef.funcVars] 中按 [VariableRef.varId] 查找。
 /// - [VariableSource.projVar]：在 [project.projectVars] 中按 [VariableRef.varId] 查找。
+/// - [VariableSource.component]：运行时注入（item/index/tab/value 等），静态
+///   无法确定类型，返回 [PortType.any]（兼容一切，由运行时按值校验）。
 ///
 /// 找不到返回 null（引用目标不存在）。
 PortType? resolveRefType(
@@ -58,6 +60,9 @@ PortType? resolveRefType(
         if (v.id == varId) return v.type;
       }
       return null;
+    case VariableSource.component:
+      // 组件上下文变量类型由运行时值决定，静态返回 any 以兼容校验。
+      return PortType.any;
   }
 }
 

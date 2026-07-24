@@ -257,6 +257,18 @@ class IrValidator {
           ),);
         }
         break;
+      case VariableSource.component:
+        // 组件上下文变量在运行时由容器组件注入，静态无法校验存在性；
+        // 仅校验引用字段非空（componentId / fieldName 缺失视为引用损坏）。
+        if (ref.componentId == null || ref.fieldName == null) {
+          issues.add(Issue(
+            severity: IssueSeverity.error,
+            path: path,
+            message: '参数 $paramName 的 component 引用缺少 '
+                'componentId / fieldName',
+          ),);
+        }
+        break;
     }
 
     // ---- 类型匹配（warning 级，用 type_checker）----

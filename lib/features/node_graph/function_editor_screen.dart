@@ -9,6 +9,7 @@ import '../marketplace/marketplace_providers.dart';
 import 'connection_painter.dart';
 import 'dag_validator.dart';
 import 'graph_providers.dart';
+import 'node_kinds.dart';
 import 'node_layout.dart';
 import 'node_widget.dart';
 
@@ -54,6 +55,9 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
   String? _selectedEdgeKey;
 
   bool _paletteExpanded = false;
+
+  /// 调色板中已折叠的节点分类（默认全展开，点击分组标题可折叠）。
+  final Set<NodeCategory> _collapsedCategories = <NodeCategory>{};
 
   @override
   void initState() {
@@ -576,51 +580,53 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
   }
 
   Widget _buildPaletteGrid(ThemeData theme) {
-    // 基础节点种类
-    final baseKinds = <_NodeKindEntry>[
-      const _NodeKindEntry(kind: 'variable_set', label: 'Set Var', icon: Icons.label_outline),
-      const _NodeKindEntry(kind: 'variable_get', label: 'Get Var', icon: Icons.label_outline),
-      const _NodeKindEntry(kind: 'arithmetic', label: 'Arithmetic', icon: Icons.calculate_outlined),
-      const _NodeKindEntry(kind: 'logic', label: 'Logic', icon: Icons.account_tree_outlined),
-      const _NodeKindEntry(kind: 'string_op', label: 'String', icon: Icons.text_fields),
-      const _NodeKindEntry(kind: 'if', label: 'If', icon: Icons.call_split),
-      const _NodeKindEntry(kind: 'loop', label: 'Loop', icon: Icons.loop),
-      const _NodeKindEntry(kind: 'db_query', label: 'DB Query', icon: Icons.storage_outlined),
-      const _NodeKindEntry(kind: 'db_insert', label: 'DB Insert', icon: Icons.storage_outlined),
-      const _NodeKindEntry(kind: 'db_update', label: 'DB Update', icon: Icons.storage_outlined),
-      const _NodeKindEntry(kind: 'db_delete', label: 'DB Delete', icon: Icons.storage_outlined),
-      const _NodeKindEntry(kind: 'function_call', label: 'Call Func', icon: Icons.functions),
-      const _NodeKindEntry(kind: 'plugin_openai', label: 'OpenAI', icon: Icons.psychology_outlined),
-      const _NodeKindEntry(kind: 'plugin_anthropic', label: 'Anthropic', icon: Icons.psychology_outlined),
-    ];
-
-    // 已安装的市场插件（动态追加）
+    // 收集所有节点种类：注册表内置规格 + 市场插件（plugin_<id>）。
     final installedSpecs = ref.watch(installedPluginSpecsProvider);
-    final pluginKinds = installedSpecs
-        .map((s) => _NodeKindEntry(
-              kind: 'plugin_${s.id}',
-              label: s.displayName,
-              icon: Icons.extension,
-            ))
-        .toList();
+    final entries = <_NodeKindEntry>[
+      for (final spec in NodeKindRegistry.allKinds())
+        _NodeKindEntry(
+          kind: spec.kind,
+          label: spec.displayName,
+          icon: _iconForKind(spec.kind, spec.category),
+          category: spec.category,
+        ),
+    ];
+    // 追加市场插件（去重：避免与内置 plugin_openai/anthropic 等 kind 冲突）。
+    for (final s in installedSpecs) {
+      final kind = 'plugin_${s.id}';
+      if (entries.any((e) => e.kind == kind)) continue;
+      entries.add(_NodeKindEntry(
+        kind: kind,
+        label: s.displayName,
+        icon: Icons.extension,
+        category: NodeCategory.plugin,
+      ));
+    }
 
-    final kinds = [...baseKinds, ...pluginKinds];
-
-    return SizedBox(
-      height: 88,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        itemCount: kinds.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
-        itemBuilder: (context, i) {
-          final entry = kinds[i];
-          return _PaletteButton(
-            entry: entry,
-            isPlugin: entry.kind.startsWith('plugin_'),
-            onTap: () => _addNodeOfKind(entry.kind),
-          );
-        },
+    // 按 NodeCategory 声明序分组，确保调色板分组顺序稳定。
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxHeight: 280),
+      child: ListView(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+        children: [
+          for (final cat in NodeCategory.values)
+            if (entries.any((e) => e.category == cat))
+              _PaletteCategoryGroup(
+                category: cat,
+                entries: entries
+                    .where((e) => e.category == cat)
+                    .toList(growable: false),
+                collapsed: _collapsedCategories.contains(cat),
+                onToggle: () => setState(() {
+                  if (_collapsedCategories.contains(cat)) {
+                    _collapsedCategories.remove(cat);
+                  } else {
+                    _collapsedCategories.add(cat);
+                  }
+                }),
+                onTapEntry: _addNodeOfKind,
+              ),
+        ],
       ),
     );
   }
@@ -723,11 +729,223 @@ class _NodeKindEntry {
     required this.kind,
     required this.label,
     required this.icon,
+    required this.category,
   });
 
   final String kind;
   final String label;
   final IconData icon;
+  final NodeCategory category;
+}
+
+/// 节点分类分组标签。
+String _categoryLabel(NodeCategory c) {
+  switch (c) {
+    case NodeCategory.variable:
+      return '变量';
+    case NodeCategory.operation:
+      return '运算';
+    case NodeCategory.logic:
+      return '逻辑';
+    case NodeCategory.flow:
+      return '流程';
+    case NodeCategory.function:
+      return '函数';
+    case NodeCategory.database:
+      return '数据库';
+    case NodeCategory.uiControl:
+      return 'UI 控制';
+    case NodeCategory.plugin:
+      return '插件';
+  }
+}
+
+/// 分类分组标题左侧的图标。
+IconData _categoryIcon(NodeCategory c) {
+  switch (c) {
+    case NodeCategory.variable:
+      return Icons.label_outline;
+    case NodeCategory.operation:
+      return Icons.calculate_outlined;
+    case NodeCategory.logic:
+      return Icons.account_tree_outlined;
+    case NodeCategory.flow:
+      return Icons.call_split;
+    case NodeCategory.function:
+      return Icons.functions;
+    case NodeCategory.database:
+      return Icons.storage_outlined;
+    case NodeCategory.uiControl:
+      return Icons.touch_app_outlined;
+    case NodeCategory.plugin:
+      return Icons.extension;
+  }
+}
+
+/// 按 kind 推断调色板按钮图标（与节点类别语义对齐）。
+IconData _iconForKind(String kind, NodeCategory category) {
+  // 细分按 kind 名匹配更直观的图标。
+  switch (kind) {
+    case 'variable_set':
+      return Icons.label_outline;
+    case 'arithmetic':
+      return Icons.calculate_outlined;
+    case 'math_func':
+      return Icons.functions;
+    case 'string_op':
+      return Icons.text_fields;
+    case 'list_op':
+      return Icons.list_alt;
+    case 'date_op':
+      return Icons.event_outlined;
+    case 'logic':
+      return Icons.account_tree_outlined;
+    case 'compare':
+      return Icons.compare_arrows;
+    case 'type_check':
+      return Icons.fact_check_outlined;
+    case 'ternary':
+      return Icons.alt_route;
+    case 'if':
+      return Icons.call_split;
+    case 'loop':
+      return Icons.loop;
+    case 'return':
+      return Icons.subdirectory_arrow_right;
+    case 'function_call':
+      return Icons.functions;
+    case 'db_query_one':
+    case 'db_query_rows':
+      return Icons.search;
+    case 'db_aggregate':
+      return Icons.functions;
+    case 'db_insert':
+    case 'db_insert_rows':
+      return Icons.add_circle_outline;
+    case 'db_update':
+      return Icons.edit;
+    case 'db_delete':
+      return Icons.delete_outline;
+    case 'db_create_table':
+      return Icons.table_chart_outlined;
+    case 'db_alter_table':
+      return Icons.table_rows_outlined;
+    case 'ui_set_text':
+      return Icons.text_fields;
+    case 'ui_set_visible':
+      return Icons.visibility_outlined;
+    case 'ui_set_enabled':
+      return Icons.toggle_on_outlined;
+    case 'ui_set_prop':
+      return Icons.tune;
+    case 'ui_navigate':
+      return Icons.navigation_outlined;
+    case 'ui_show_toast':
+      return Icons.notifications_outlined;
+    case 'plugin_openai':
+      return Icons.psychology_outlined;
+    case 'plugin_anthropic':
+      return Icons.auto_awesome_outlined;
+  }
+  // 兜底：plugin_<id> 等市场插件用扩展图标，其余用分类图标。
+  if (kind.startsWith('plugin_')) return Icons.extension;
+  return _categoryIcon(category);
+}
+
+/// 可折叠的节点分类分组。
+///
+/// 标题行展示分类图标 + 名称 + 节点数 + 折叠箭头；展开时下方横向滚动节点按钮。
+class _PaletteCategoryGroup extends StatelessWidget {
+  const _PaletteCategoryGroup({
+    required this.category,
+    required this.entries,
+    required this.collapsed,
+    required this.onToggle,
+    required this.onTapEntry,
+  });
+
+  final NodeCategory category;
+  final List<_NodeKindEntry> entries;
+  final bool collapsed;
+  final VoidCallback onToggle;
+
+  /// 点击某节点按钮回调（参数：kind）。
+  final ValueChanged<String> onTapEntry;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          InkWell(
+            onTap: onToggle,
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Row(
+                children: [
+                  Icon(_categoryIcon(category),
+                      size: 16, color: cs.primary),
+                  const SizedBox(width: 6),
+                  Text(
+                    _categoryLabel(category),
+                    style: theme.textTheme.labelLarge
+                        ?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${entries.length}',
+                    style: theme.textTheme.labelSmall
+                        ?.copyWith(color: cs.outline),
+                  ),
+                  const Spacer(),
+                  Icon(
+                    collapsed
+                        ? Icons.keyboard_arrow_right
+                        : Icons.keyboard_arrow_down,
+                    size: 18,
+                    color: cs.outline,
+                  ),
+                ],
+              ),
+            ),
+          ),
+          AnimatedCrossFade(
+            duration: const Duration(milliseconds: 160),
+            crossFadeState: collapsed
+                ? CrossFadeState.showFirst
+                : CrossFadeState.showSecond,
+            firstChild: const SizedBox(height: 0, width: double.infinity),
+            secondChild: Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: SizedBox(
+                height: 88,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  itemCount: entries.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 8),
+                  itemBuilder: (context, i) {
+                    final e = entries[i];
+                    return _PaletteButton(
+                      entry: e,
+                      isPlugin: e.category == NodeCategory.plugin,
+                      onTap: () => onTapEntry(e.kind),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// 面板按钮。

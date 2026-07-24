@@ -1079,12 +1079,16 @@ class _CategoryChip extends StatelessWidget {
         return '变量';
       case NodeCategory.operation:
         return '运算';
+      case NodeCategory.logic:
+        return '逻辑';
       case NodeCategory.flow:
         return '流程';
       case NodeCategory.database:
         return '数据库';
       case NodeCategory.function:
         return '函数';
+      case NodeCategory.uiControl:
+        return 'UI 控制';
       case NodeCategory.plugin:
         return '插件';
     }
@@ -1117,7 +1121,8 @@ String _stringOf(Object? v) {
 /// - upstream：`#节点展示名.输出名`（节点展示名取自 [NodeKindRegistry]，
 ///   未注册回退 kind；找不到节点 / 输出时回退 `#nodeId.outputName`）；
 /// - funcVar：`#变量名`（找不到回退 `#func:varId`）；
-/// - projVar：`#变量名`（找不到回退 `#proj:varId`）。
+/// - projVar：`#变量名`（找不到回退 `#proj:varId`）；
+/// - component：`#组件展示名.字段名`（找不到回退 `#component:componentId.fieldName`）。
 String _refDisplayLabel(VariableRef ref, FunctionDef fn, Project? project) {
   switch (ref.source) {
     case VariableSource.upstream:
@@ -1149,6 +1154,13 @@ String _refDisplayLabel(VariableRef ref, FunctionDef fn, Project? project) {
         }
       }
       return '#proj:$varId';
+    case VariableSource.component:
+      final componentId = ref.componentId;
+      final fieldName = ref.fieldName;
+      if (componentId == null || fieldName == null) {
+        return '#<无效引用>';
+      }
+      return '#component:$componentId.$fieldName';
   }
 }
 

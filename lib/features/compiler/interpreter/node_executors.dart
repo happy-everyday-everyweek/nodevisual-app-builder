@@ -159,6 +159,13 @@ Object? _resolveVariableRef(VariableRef ref, RuntimeScope scope) {
     case VariableSource.projVar:
       if (ref.varId == null) return null;
       return scope.getProjVar(ref.varId!);
+    case VariableSource.component:
+      // 组件上下文变量（item / index / tab / value 等）由 UI 渲染层
+      // 在运行时按组件树位置注入到 [RuntimeScope.componentContexts]。
+      // 当前作用域未注入对应组件上下文时返回 null（加载态策略在 UI 侧处理）。
+      if (ref.componentId == null || ref.fieldName == null) return null;
+      final ctx = scope.getComponentContext(ref.componentId!);
+      return ctx?.get(ref.fieldName!);
   }
 }
 
