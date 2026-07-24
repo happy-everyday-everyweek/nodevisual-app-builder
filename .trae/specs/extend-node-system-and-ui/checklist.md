@@ -2,7 +2,7 @@
 
 ## 节点系统
 - [ ] `variable_get` 节点已从 `node_kinds.dart` 与执行器移除，画布不显示
-- [ ] 既有项目含 `variable_get` 节点时，加载不崩溃（降级为未知节点或自动移除）
+- [x] 既有项目含 `variable_get` 节点时，加载不崩溃（降级为未知节点或自动移除）
 - [ ] `db_aggregate` 支持 count/sum/avg/min/max 五种聚合
 - [ ] `db_insert_rows` 批量插入返回 insertedIds 列表
 - [ ] `math_func` 的 round/floor/ceil/abs 返回 int，其余返回 double
@@ -15,7 +15,7 @@
 
 ## 函数签名
 - [ ] `FunctionDef.inputs` / `outputs` 字段存在且可序列化
-- [ ] 既有无签名函数加载时自动推导签名（入参 = isInput funcVars，出参 = 空）
+- [x] 既有无签名函数加载时自动推导签名（入参 = isInput funcVars，出参 = 空）
 - [ ] `function_call` 节点选择目标后，参数端口与返回值端口按目标签名动态生成
 - [ ] 目标函数签名变更后，已放置的 function_call 节点端口同步更新
 - [ ] `return` 节点支持多返回值 map，按名映射到 outputs
@@ -61,5 +61,5 @@
 ## 集成
 - [ ] 节点调色板按类别分组可折叠
 - [ ] 函数签名编辑面板可 CRUD 入参出参
-- [ ] 既有项目加载不崩溃（迁移正确）
-- [ ] 端到端：列表渲染数据 + 滑块联动 + 页面加载函数返回值显示
+- [x] 既有项目加载不崩溃（迁移正确）
+- [x] 端到端：列表渲染数据 + 滑块联动 + 页面加载函数返回值显示
