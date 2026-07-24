@@ -1007,7 +1007,7 @@ class _ParamEditRow extends StatelessWidget {
     if (v.isEmpty) return null;
     if (v == 'true') return true;
     if (v == 'false') return false;
-    final num parsed = num.tryParse(v);
+    final num? parsed = num.tryParse(v);
     if (parsed != null) return parsed;
     return v;
   }
@@ -1295,7 +1295,6 @@ class _PaletteButtonState extends State<_PaletteButton> {
       child: AnimatedScale(
         scale: _pressed ? 0.94 : 1.0,
         duration: const Duration(milliseconds: 120),
-        reverseDuration: const Duration(milliseconds: 160),
         curve: Curves.easeOutCubic,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 160),

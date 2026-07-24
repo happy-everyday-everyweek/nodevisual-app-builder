@@ -266,7 +266,6 @@ class AppTheme {
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(20),
         ),
-        contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
         titleTextStyle: TextStyle(
           color: colorScheme.onSurface,
           fontSize: 18,
@@ -302,7 +301,7 @@ class AppTheme {
         circularTrackColor: Colors.transparent,
       ),
       // 默认页面切换动画时长（与 GoRouter pageBuilder 配合）。
-      pageTransitionsTheme: const PageTransitionsTheme(
+      pageTransitionsTheme: PageTransitionsTheme(
         builders: {
           TargetPlatform.android: _NoTransitionBuilder(),
           TargetPlatform.iOS: _NoTransitionBuilder(),
@@ -315,8 +314,11 @@ class AppTheme {
 /// 空白 PageTransitionsBuilder：禁用 Material 默认页面切换，
 /// 让 GoRouter 的自定义 pageBuilder 接管全部过渡。
 class _NoTransitionBuilder extends PageTransitionsBuilder {
+  const _NoTransitionBuilder();
+
   @override
-  Widget buildTransitions(
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
     BuildContext context,
     Animation<double> animation,
     Animation<double> secondaryAnimation,
