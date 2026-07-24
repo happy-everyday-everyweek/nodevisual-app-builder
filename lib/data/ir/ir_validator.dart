@@ -208,6 +208,51 @@ class IrValidator {
         }
         break;
       case VariableSource.funcVar:
+        // 页面级函数 outputs 引用：校验目标函数存在且 outputs 含该名。
+        if (ref.isPageFunc) {
+          final funcId = ref.funcId;
+          final outputName = ref.outputName;
+          if (funcId == null || outputName == null) {
+            issues.add(Issue(
+              severity: IssueSeverity.error,
+              path: path,
+              message: '参数 $paramName 的页面函数 outputs 引用缺少 '
+                  'funcId / outputName',
+            ),);
+            break;
+          }
+          FunctionDef? targetFn;
+          for (final f in project.functions) {
+            if (f.id == funcId) {
+              targetFn = f;
+              break;
+            }
+          }
+          if (targetFn == null) {
+            issues.add(Issue(
+              severity: IssueSeverity.error,
+              path: path,
+              message: '参数 $paramName 引用的页面函数 $funcId 不存在',
+            ),);
+            break;
+          }
+          bool outputExists = false;
+          for (final out in targetFn.outputs) {
+            if (out.name == outputName) {
+              outputExists = true;
+              break;
+            }
+          }
+          if (!outputExists) {
+            issues.add(Issue(
+              severity: IssueSeverity.error,
+              path: path,
+              message: '参数 $paramName 引用的函数 $funcId '
+                  '无 outputs 名 $outputName',
+            ),);
+          }
+          break;
+        }
         final varId = ref.varId;
         if (varId == null) {
           issues.add(Issue(
@@ -257,6 +302,18 @@ class IrValidator {
           ),);
         }
         break;
+      case VariableSource.component:
+        // 组件上下文变量在运行时由容器组件注入，静态无法校验存在性；
+        // 仅校验引用字段非空（componentId / fieldName 缺失视为引用损坏）。
+        if (ref.componentId == null || ref.fieldName == null) {
+          issues.add(Issue(
+            severity: IssueSeverity.error,
+            path: path,
+            message: '参数 $paramName 的 component 引用缺少 '
+                'componentId / fieldName',
+          ),);
+        }
+        break;
     }
 
     // ---- 类型匹配（warning 级，用 type_checker）----
@@ -283,7 +340,10 @@ class IrValidator {
 
   /// 校验函数 entry 的 ref 引用。
   ///
-  /// - [EntryKind.uiEvent]：ref 指向 UI 节点 id，需在 [Project.ui] 树中存在。
+  /// - [EntryKind.uiEvent]：ref 指向 UI 节点 id（`componentId::eventName`），
+  ///   需在 [Project.ui] 树中存在。
+  /// - [EntryKind.pageEvent]：ref 形如 `<pageId>:<event>`，校验 pageId 在
+  ///   [Project.pages] 中存在、event ∈ [PageEventName.all]。
   /// - [EntryKind.funcCall]：ref 为空（由调用方决定），无需校验。
   /// - [EntryKind.timer] / [EntryKind.external]：v1 不校验配置存在性。
   static void _validateEntry(
@@ -294,6 +354,7 @@ class IrValidator {
   ) {
     switch (entry.kind) {
       case EntryKind.uiEvent:
+        // uiEvent ref 形如 `componentId::eventName`，校验组件存在。
         if (entry.ref == null) {
           issues.add(Issue(
             severity: IssueSeverity.warning,
@@ -302,11 +363,43 @@ class IrValidator {
           ),);
           break;
         }
-        if (!_uiNodeExists(project.ui, entry.ref!)) {
+        // 解析 componentId（`::` 之前）。
+        final refStr = entry.ref!;
+        final sepIdx = refStr.indexOf('::');
+        final componentId =
+            sepIdx > 0 ? refStr.substring(0, sepIdx) : refStr;
+        if (!_uiNodeExists(project.ui, componentId)) {
           issues.add(Issue(
             severity: IssueSeverity.error,
             path: path,
             message: '入口 ref "${entry.ref}" 指向的 UI 节点不存在',
+          ),);
+        }
+        break;
+      case EntryKind.pageEvent:
+        final pageId = entry.pageId;
+        final event = entry.pageEvent;
+        if (pageId == null || event == null) {
+          issues.add(Issue(
+            severity: IssueSeverity.error,
+            path: path,
+            message: '页面事件入口 ref "${entry.ref}" 格式不合法'
+                '（应为 <pageId>:<event>）',
+          ),);
+          break;
+        }
+        bool pageExists = false;
+        for (final p in project.pages) {
+          if (p.id == pageId) {
+            pageExists = true;
+            break;
+          }
+        }
+        if (!pageExists) {
+          issues.add(Issue(
+            severity: IssueSeverity.error,
+            path: path,
+            message: '页面事件入口指向的页面 $pageId 不存在',
           ),);
         }
         break;

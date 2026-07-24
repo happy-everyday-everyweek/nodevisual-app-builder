@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../data/models/entry.dart';
 import '../../data/models/function_def.dart';
+import '../../data/models/page.dart';
 import '../../data/models/project.dart';
 import '../../data/models/ui_tree.dart';
 import '../../data/models/variable_ref.dart';
@@ -374,6 +375,121 @@ class UiMutator extends Notifier<Project?> {
     _commit(p.copyWith(functions: newFuncs));
   }
 
+  // ---- 页面管理 ----
+
+  /// 新建页面；可选关联 UI 根节点。
+  Page? addPage(String name, {String? rootUiNodeId}) {
+    final p = _project;
+    if (p == null) return null;
+    final page = Page(
+      id: _uuid.v4(),
+      name: name,
+      rootUiNodeId: rootUiNodeId,
+      isHome: p.pages.isEmpty,
+    );
+    _commit(p.copyWith(pages: [...p.pages, page]));
+    return page;
+  }
+
+  /// 更新页面字段。
+  void updatePage(String pageId, {String? name, String? rootUiNodeId, String? route, bool? isHome}) {
+    final p = _project;
+    if (p == null) return;
+    var newPages = p.pages.map((pg) {
+      if (pg.id != pageId) return pg;
+      return pg.copyWith(
+        name: name,
+        rootUiNodeId: rootUiNodeId,
+        route: route,
+        isHome: isHome,
+      );
+    }).toList(growable: false);
+    // isHome 唯一性：设为 home 时清除其他页面的 isHome。
+    if (isHome == true) {
+      newPages = newPages
+          .map((pg) => pg.id == pageId ? pg : pg.copyWith(isHome: false))
+          .toList(growable: false);
+    }
+    _commit(p.copyWith(pages: newPages));
+  }
+
+  /// 删除页面；同时清除关联的页面事件 entry。
+  void removePage(String pageId) {
+    final p = _project;
+    if (p == null) return;
+    final newFuncs = p.functions.map((f) {
+      final entry = f.entry;
+      if (entry != null &&
+          entry.kind == EntryKind.pageEvent &&
+          entry.pageId == pageId) {
+        return f.copyWith(entry: null);
+      }
+      return f;
+    }).toList(growable: false);
+    _commit(p.copyWith(
+      pages: p.pages.where((pg) => pg.id != pageId).toList(growable: false),
+      functions: newFuncs,
+    ));
+  }
+
+  /// 绑定页面事件到函数；funcId 为 null 时移除绑定。
+  ///
+  /// 页面事件绑定即把目标函数的 entry 设为
+  /// [FunctionEntry.pageEvent]（ref: `pageId:event`）。
+  /// 同一 pageId+event 仅允许绑定一个函数。
+  void setPageEventFunction(String pageId, String event, String? funcId) {
+    final p = _project;
+    if (p == null) return;
+    // 清除该 pageId+event 的旧绑定。
+    var newFuncs = p.functions.map((f) {
+      final entry = f.entry;
+      if (entry != null && entry.matchesPageEvent(pageId, event)) {
+        return f.copyWith(entry: null);
+      }
+      return f;
+    }).toList(growable: false);
+    // 设置目标函数的 entry。
+    if (funcId != null) {
+      newFuncs = newFuncs
+          .map((f) => f.id == funcId
+              ? f.copyWith(
+                  entry: FunctionEntry.pageEvent(pageId: pageId, event: event),)
+              : f,)
+          .toList(growable: false);
+    }
+    _commit(p.copyWith(functions: newFuncs));
+  }
+
+  /// 查找页面某事件绑定的函数 id；未绑定返回 null。
+  String? getPageEventFunctionId(String pageId, String event) {
+    final p = _project;
+    if (p == null) return null;
+    for (final f in p.functions) {
+      final entry = f.entry;
+      if (entry != null && entry.matchesPageEvent(pageId, event)) {
+        return f.id;
+      }
+    }
+    return null;
+  }
+
+  /// 获取页面下所有页面事件绑定的函数（按事件名分组）。
+  Map<String, String> getPageEventBindings(String pageId) {
+    final p = _project;
+    if (p == null) return {};
+    final result = <String, String>{};
+    for (final f in p.functions) {
+      final entry = f.entry;
+      if (entry != null &&
+          entry.kind == EntryKind.pageEvent &&
+          entry.pageId == pageId &&
+          entry.pageEvent != null) {
+        result[entry.pageEvent!] = f.id;
+      }
+    }
+    return result;
+  }
+
   // ---- 默认节点工厂 ----
 
   /// 按 type 生成默认 UI 节点（含默认 props）。
@@ -412,6 +528,44 @@ class UiMutator extends Notifier<Project?> {
         },);
       case 'scaffold':
         return UiNode(id: id, type: type, props: const {});
+      case 'rich_text':
+        return UiNode(id: id, type: type, props: const {'content': '富文本内容'});
+      case 'icon':
+        return UiNode(id: id, type: type, props: const {
+          'name': 'star',
+          'size': 24,
+        });
+      case 'badge':
+        return UiNode(id: id, type: type, props: const {'count': '0'});
+      case 'divider':
+        return UiNode(id: id, type: type, props: const {'thickness': 1});
+      case 'spacer':
+        return UiNode(id: id, type: type, props: const {'flex': 1});
+      case 'video':
+        return UiNode(id: id, type: type, props: const {'src': ''});
+      case 'slider':
+        return UiNode(id: id, type: type, props: const {
+          'value': 0.5,
+          'min': 0,
+          'max': 1,
+        });
+      case 'switch':
+        return UiNode(id: id, type: type, props: const {'value': false});
+      case 'checkbox':
+        return UiNode(id: id, type: type, props: const {
+          'value': false,
+          'label': '选项',
+        });
+      case 'progress':
+        return UiNode(id: id, type: type, props: const {'value': 0.5});
+      case 'list_vertical':
+        return UiNode(id: id, type: type, props: const {'items': ''});
+      case 'list_horizontal':
+        return UiNode(id: id, type: type, props: const {'items': ''});
+      case 'tab_container':
+        return UiNode(id: id, type: type, props: const {});
+      case 'card':
+        return UiNode(id: id, type: type, props: const {'elevation': 1});
       default:
         return UiNode(id: id, type: type, props: const {});
     }

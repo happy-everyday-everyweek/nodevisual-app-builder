@@ -1,9 +1,12 @@
 /// 函数触发方式（函数触发模型）。
 ///
-/// 函数通过 [FunctionEntry] 声明其入口，v1 支持四类触发：
+/// 函数通过 [FunctionEntry] 声明其入口，v1 支持五类触发：
 enum EntryKind {
   /// UI 事件触发（如按钮点击）。
   uiEvent,
+
+  /// 页面生命周期事件触发（onLoad/onDispose/onResume/onPause）。
+  pageEvent,
 
   /// 定时器触发。
   timer,
@@ -30,10 +33,42 @@ enum EntryKind {
   }
 }
 
+/// 页面生命周期事件名（仅 [EntryKind.pageEvent] 使用）。
+class PageEventName {
+  /// 页面加载（进入页面，DOM 挂载完成后触发）。
+  static const String onLoad = 'onLoad';
+
+  /// 页面卸载（离开页面，DOM 销毁前触发）。
+  static const String onDispose = 'onDispose';
+
+  /// 页面恢复（从后台切回前台 / 从下层路由返回）。
+  static const String onResume = 'onResume';
+
+  /// 页面暂停（切到后台 / 进入下层路由）。
+  static const String onPause = 'onPause';
+
+  /// 所有合法页面事件名（用于校验）。
+  static const List<String> all = [
+    onLoad,
+    onDispose,
+    onResume,
+    onPause,
+  ];
+
+  /// 判断 [name] 是否为合法的页面事件名。
+  static bool isValid(String? name) =>
+      name != null && all.contains(name);
+
+  /// 私有构造，禁止实例化。
+  PageEventName._();
+}
+
 /// 函数入口定义。
 ///
 /// 描述一个函数"如何被触发"。被 [FunctionDef.entry] 引用。
 /// - [kind] == [EntryKind.uiEvent]：[ref] 指向 UI 元素 id。
+/// - [kind] == [EntryKind.pageEvent]：[ref] 形如 `<pageId>:<event>`，
+///   event ∈ [PageEventName.all]（onLoad/onDispose/onResume/onPause）。
 /// - [kind] == [EntryKind.timer]：[ref] 指向定时器配置 id 或表达式。
 /// - [kind] == [EntryKind.external]：[ref] 指向外部事件标识。
 /// - [kind] == [EntryKind.funcCall]：[ref] 为空（由调用方决定）。
@@ -53,6 +88,45 @@ class FunctionEntry {
         kind: kind ?? this.kind,
         ref: ref ?? this.ref,
       );
+
+  /// 便捷构造：页面事件入口。
+  ///
+  /// [pageId] 为页面 id，[event] 应 ∈ [PageEventName.all]。
+  factory FunctionEntry.pageEvent({
+    required String pageId,
+    required String event,
+  }) {
+    return FunctionEntry(
+      kind: EntryKind.pageEvent,
+      ref: '$pageId:$event',
+    );
+  }
+
+  /// 当 [kind] == [EntryKind.pageEvent] 时，解析 ref 得到 pageId。
+  /// 其他 kind 或格式不合法时返回 null。
+  String? get pageId {
+    if (kind != EntryKind.pageEvent || ref == null) return null;
+    final idx = ref!.indexOf(':');
+    if (idx <= 0) return null;
+    return ref!.substring(0, idx);
+  }
+
+  /// 当 [kind] == [EntryKind.pageEvent] 时，解析 ref 得到 event。
+  /// 其他 kind 或格式不合法时返回 null。
+  String? get pageEvent {
+    if (kind != EntryKind.pageEvent || ref == null) return null;
+    final idx = ref!.indexOf(':');
+    if (idx < 0 || idx == ref!.length - 1) return null;
+    final event = ref!.substring(idx + 1);
+    return PageEventName.isValid(event) ? event : null;
+  }
+
+  /// 判断此入口是否匹配指定的页面事件。
+  bool matchesPageEvent(String pageId, String event) {
+    return kind == EntryKind.pageEvent &&
+        ref != null &&
+        ref == '$pageId:$event';
+  }
 
   @override
   bool operator ==(Object other) =>

@@ -152,11 +152,32 @@ class AndroidBuilder with BuilderUtils implements PlatformBuilder {
 6. 处理 UI 事件 → 触发函数 → 更新绑定
 
 ## v1 支持的节点类型
-- 变量：variable_set, variable_get
-- 运算：arithmetic, logic, string_op
-- 流程：if, loop, function_call, return
-- 数据库：db_query, db_insert, db_update, db_delete, db_create_table, db_alter_table
+- 变量：variable_set（读取用 `#` 引用，无 variable_get）
+- 运算：arithmetic, math_func, string_op, list_op, date_op
+- 逻辑：logic, compare, type_check, ternary
+- 流程：if, loop, function_call, return（多返回值按 outputs 名映射）
+- 数据库：db_query_one, db_query_rows, db_aggregate, db_insert, db_insert_rows, db_update, db_delete, db_create_table, db_alter_table
+- UI 控制：ui_set_text, ui_set_visible, ui_set_enabled, ui_set_prop, ui_navigate, ui_show_toast
 - 插件：plugin_*（按注册的插件 executor 执行）
+
+## 函数签名
+- 函数声明 inputs/outputs，`function_call` 节点按目标签名动态生成参数与返回值端口
+- `return` 节点按目标函数 outputs 名映射返回多值
+
+## 页面触发
+- 函数入口 entry.kind = pageEvent，ref 形如 `<pageId>:<event>`
+- 支持事件：onLoad / onDispose / onResume / onPause
+- onLoad 函数的 outputs 缓存到页面作用域，供同页面 UI 组件 `#` 引用
+
+## 变量作用域（四源）
+- 项目变量：`#projVar`，引用项目级变量
+- 组件上下文变量：`#component`，引用容器组件提供的运行时上下文（列表项 item/index、滑块 value 等）
+- 函数变量：`#funcVar`，含时间线规则（页面 onLoad 函数 outputs 缓存到页面作用域）
+- 上游节点输出：`#upstream`，引用同函数已执行节点的命名数据输出
+
+## 时间线与加载态
+- 函数未就绪时（running/idle/error），UI 引用按加载态策略返回：
+  - typeDefault（默认值）/ placeholder（占位文字）/ blank（不渲染）
 
 ## v1 限制
 - Web/Windows 端不支持 db_* 与 plugin_* 节点（降级为 no-op）

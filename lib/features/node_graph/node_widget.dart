@@ -15,7 +15,11 @@ import 'node_layout.dart';
 /// result  [number]              <- 数据输出展示行 (20px each, 只读)
 /// rows    [list]
 /// ```
-class NodeCard extends StatelessWidget {
+///
+/// 动画：
+/// - 出现：从 0.96 缩放 + 淡入（220ms，easeOutCubic），消失原路反向。
+/// - 选中：边框宽度与阴影强度过渡（200ms），反向恢复。
+class NodeCard extends StatefulWidget {
   const NodeCard({
     super.key,
     required this.node,
@@ -60,96 +64,140 @@ class NodeCard extends StatelessWidget {
   /// 拖拽连线取消。
   final VoidCallback? onConnectionDragCancel;
 
+  @override
+  State<NodeCard> createState() => _NodeCardState();
+}
+
+class _NodeCardState extends State<NodeCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _appear;
+  late final Animation<double> _appearAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _appear = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 220),
+      reverseDuration: const Duration(milliseconds: 180),
+    );
+    _appearAnim = CurvedAnimation(
+      parent: _appear,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+    // 进入时正放；widget 销毁时（dispose）由框架自动移除，无需显式 reverse。
+    _appear.forward();
+  }
+
+  @override
+  void dispose() {
+    _appear.dispose();
+    super.dispose();
+  }
+
   String get _displayName {
-    final name = node.params['name'];
+    final name = widget.node.params['name'];
     if (name is String && name.trim().isNotEmpty) return name.trim();
-    return node.kind;
+    return widget.node.kind;
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
-    return Material(
-      color: Colors.transparent,
-      child: Container(
-        width: NodeLayout.width,
-        decoration: BoxDecoration(
-          color: cs.surface,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: selected ? cs.primary : cs.outlineVariant,
-            width: selected ? 2 : 1,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: selected ? 0.18 : 0.10),
-              blurRadius: selected ? 8 : 4,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            // 卡片主体：单击打开节点编辑页（同时选中）+ 长按选中 + 单指拖拽移动。
-            // 端口在 Stack 上层，自身手势让位。
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () {
-                onSelect?.call();
-                onOpenEditor?.call();
-              },
-              onLongPress: onSelect,
-              onPanUpdate: onDragUpdate,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _buildHeader(theme, cs),
-                  for (var i = 0; i < node.controlOutputs.length; i++)
-                    _buildOutputRow(
-                      theme,
-                      cs,
-                      node.controlOutputs[i].name,
-                    ),
-                  if (node.dataOutputs.isNotEmpty) _buildDataSection(theme, cs),
-                ],
+    return ScaleTransition(
+      scale: Tween<double>(begin: 0.96, end: 1.0).animate(_appearAnim),
+      alignment: Alignment.center,
+      child: FadeTransition(
+        opacity: Tween<double>(begin: 0.0, end: 1.0).animate(_appearAnim),
+        child: Material(
+          color: Colors.transparent,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOutCubic,
+            width: NodeLayout.width,
+            decoration: BoxDecoration(
+              color: cs.surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: widget.selected ? cs.primary : cs.outlineVariant,
+                width: widget.selected ? 1.5 : 1,
               ),
-            ),
-            // 入口端口（左侧，头部中线）。
-            Positioned(
-              left: -NodeLayout.portRadius,
-              top: NodeLayout.headerHeight / 2 - NodeLayout.portRadius,
-              child: _PortHit(
-                color: cs.primary,
-                onTap: onSelect,
-                tooltip: '入口端口',
-              ),
-            ),
-            // 各控制流输出端口（右侧，对应行中线）。
-            for (var i = 0; i < node.controlOutputs.length; i++)
-              Positioned(
-                left: NodeLayout.width - NodeLayout.portRadius,
-                top: NodeLayout.headerHeight +
-                    i * NodeLayout.outputRowHeight +
-                    NodeLayout.outputRowHeight / 2 -
-                    NodeLayout.portRadius,
-                child: _PortHit(
-                  color: cs.tertiary,
-                  onPanStart: onConnectionDragStart != null
-                      ? () => onConnectionDragStart!(node.controlOutputs[i].name)
-                      : null,
-                  onPanUpdate: onConnectionDragUpdate == null
-                      ? null
-                      : (details) =>
-                          onConnectionDragUpdate!(details.globalPosition),
-                  onPanEnd: onConnectionDragEnd,
-                  onPanCancel: onConnectionDragCancel,
-                  tooltip: '输出: ${node.controlOutputs[i].name}',
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black
+                      .withValues(alpha: widget.selected ? 0.10 : 0.04),
+                  blurRadius: widget.selected ? 12 : 6,
+                  offset: const Offset(0, 2),
                 ),
-              ),
-          ],
+              ],
+            ),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                // 卡片主体：单击打开节点编辑页（同时选中）+ 长按选中 + 单指拖拽移动。
+                // 端口在 Stack 上层，自身手势让位。
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () {
+                    widget.onSelect?.call();
+                    widget.onOpenEditor?.call();
+                  },
+                  onLongPress: widget.onSelect,
+                  onPanUpdate: widget.onDragUpdate,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _buildHeader(theme, cs),
+                      for (var i = 0; i < widget.node.controlOutputs.length; i++)
+                        _buildOutputRow(
+                          theme,
+                          cs,
+                          widget.node.controlOutputs[i].name,
+                        ),
+                      if (widget.node.dataOutputs.isNotEmpty)
+                        _buildDataSection(theme, cs),
+                    ],
+                  ),
+                ),
+                // 入口端口（左侧，头部中线）。
+                Positioned(
+                  left: -NodeLayout.portRadius,
+                  top: NodeLayout.headerHeight / 2 - NodeLayout.portRadius,
+                  child: _PortHit(
+                    color: cs.primary,
+                    onTap: widget.onSelect,
+                    tooltip: '入口端口',
+                  ),
+                ),
+                // 各控制流输出端口（右侧，对应行中线）。
+                for (var i = 0; i < widget.node.controlOutputs.length; i++)
+                  Positioned(
+                    left: NodeLayout.width - NodeLayout.portRadius,
+                    top: NodeLayout.headerHeight +
+                        i * NodeLayout.outputRowHeight +
+                        NodeLayout.outputRowHeight / 2 -
+                        NodeLayout.portRadius,
+                    child: _PortHit(
+                      color: cs.onSurface,
+                      onPanStart: widget.onConnectionDragStart != null
+                          ? () => widget.onConnectionDragStart!(
+                              widget.node.controlOutputs[i].name)
+                          : null,
+                      onPanUpdate: widget.onConnectionDragUpdate == null
+                          ? null
+                          : (details) => widget.onConnectionDragUpdate!(
+                              details.globalPosition),
+                      onPanEnd: widget.onConnectionDragEnd,
+                      onPanCancel: widget.onConnectionDragCancel,
+                      tooltip: '输出: ${widget.node.controlOutputs[i].name}',
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -160,16 +208,16 @@ class NodeCard extends StatelessWidget {
       height: NodeLayout.headerHeight,
       padding: const EdgeInsets.only(left: 16, right: 8),
       decoration: BoxDecoration(
-        color: cs.primaryContainer.withValues(alpha: 0.35),
+        color: cs.surfaceContainerHigh,
         borderRadius: const BorderRadius.only(
-          topLeft: Radius.circular(9),
-          topRight: Radius.circular(9),
+          topLeft: Radius.circular(11),
+          topRight: Radius.circular(11),
         ),
       ),
       child: Row(
         children: [
-          Icon(_kindIcon(node.kind), size: 14, color: cs.primary),
-          const SizedBox(width: 4),
+          Icon(_kindIcon(widget.node.kind), size: 14, color: cs.onSurface),
+          const SizedBox(width: 6),
           Flexible(
             child: Text(
               _displayName,
@@ -183,28 +231,28 @@ class NodeCard extends StatelessWidget {
           ),
           const SizedBox(width: 4),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
             decoration: BoxDecoration(
-              color: cs.secondaryContainer.withValues(alpha: 0.6),
+              color: cs.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
-              node.kind,
+              widget.node.kind,
               style: theme.textTheme.labelSmall?.copyWith(
                 fontSize: 10,
                 fontFamily: 'monospace',
-                color: cs.onSecondaryContainer,
+                color: cs.onSurfaceVariant,
               ),
             ),
           ),
-          if (onDelete != null) ...[
+          if (widget.onDelete != null) ...[
             const SizedBox(width: 4),
             // 触控目标 >= 28dp（节点内紧凑场景），用 IconButton 保证命中区
             SizedBox(
               width: 28,
               height: 28,
               child: IconButton(
-                onPressed: onDelete,
+                onPressed: widget.onDelete,
                 icon: Icon(Icons.close, size: 14, color: cs.error),
                 padding: EdgeInsets.zero,
                 splashRadius: 16,
@@ -256,7 +304,7 @@ class NodeCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
-          for (final output in node.dataOutputs)
+          for (final output in widget.node.dataOutputs)
             Container(
               height: NodeLayout.dataRowHeight,
               padding: const EdgeInsets.symmetric(horizontal: 4),
@@ -408,19 +456,8 @@ class _TypeChip extends StatelessWidget {
   }
 
   Color _typeColor(PortType type, ColorScheme cs) {
-    switch (type) {
-      case PortType.number:
-        return Colors.blue.shade700;
-      case PortType.string:
-        return Colors.green.shade700;
-      case PortType.boolean:
-        return Colors.orange.shade700;
-      case PortType.list:
-        return Colors.purple.shade700;
-      case PortType.map:
-        return Colors.teal.shade700;
-      case PortType.any:
-        return cs.onSurfaceVariant;
-    }
+    // 极简黑白灰：所有类型统一用 onSurfaceVariant，避免彩色噪点；
+    // 通过文字标签区分，不靠颜色编码。
+    return cs.onSurfaceVariant;
   }
 }

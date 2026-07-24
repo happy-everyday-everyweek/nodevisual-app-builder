@@ -161,11 +161,48 @@ class _EmptyState extends StatelessWidget {
 }
 
 /// 项目列表。
-class _ProjectList extends StatelessWidget {
+///
+/// 列表项入场动画：自下而上淡入 + 轻微位移（原路反向消失）。
+/// 中等宽松：itemSpacing 12、padding 加大。
+class _ProjectList extends StatefulWidget {
   const _ProjectList({required this.theme, required this.projects});
 
   final ThemeData theme;
   final List<ProjectSummary> projects;
+
+  @override
+  State<_ProjectList> createState() => _ProjectListState();
+}
+
+class _ProjectListState extends State<_ProjectList>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+  late final Animation<double> _fade;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 320),
+      reverseDuration: const Duration(milliseconds: 240),
+    );
+    _fade = CurvedAnimation(
+      parent: _ctrl,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+    // 首帧后启动，避免与 push 路由动画重叠。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _ctrl.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
 
   String _formatTime(String iso) {
     try {
@@ -181,28 +218,76 @@ class _ProjectList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 96),
-      itemCount: projects.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
-      itemBuilder: (context, index) {
-        final p = projects[index];
-        return Card(
-          child: ListTile(
-            leading: CircleAvatar(
-              backgroundColor: theme.colorScheme.primaryContainer,
-              foregroundColor: theme.colorScheme.onPrimaryContainer,
-              child: const Icon(Icons.folder_outlined),
+    final cs = widget.theme.colorScheme;
+    return FadeTransition(
+      opacity: _fade,
+      child: ListView.separated(
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 100),
+        itemCount: widget.projects.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 12),
+        itemBuilder: (context, index) {
+          final p = widget.projects[index];
+          // 错峰入场：每项延后 40ms。
+          final delay = (index * 40).clamp(0, 240).toDouble();
+          return _AnimatedListItem(
+            controller: _ctrl,
+            delay: delay,
+            child: Card(
+              child: ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: cs.surfaceContainerHigh,
+                  foregroundColor: cs.onSurface,
+                  child: const Icon(Icons.folder_outlined),
+                ),
+                title: Text(
+                  p.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                subtitle: Text('更新于 ${_formatTime(p.updatedAt)}'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => context.push(AppConstants.projectRoute(p.id)),
+              ),
             ),
-            title: Text(
-              p.name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-            subtitle: Text('更新于 ${_formatTime(p.updatedAt)}'),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () => context.push(AppConstants.projectRoute(p.id)),
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// 单个列表项的入场动画包装：基于父 controller + delay 做错峰淡入。
+class _AnimatedListItem extends StatelessWidget {
+  const _AnimatedListItem({
+    required this.controller,
+    required this.delay,
+    required this.child,
+  });
+
+  final Animation<double> controller;
+  final double delay; // ms
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    // 将 controller (0..1, 320ms) 映射到 [delay, delay+200]ms 区间。
+    final begin = delay / 320;
+    final end = ((delay + 200) / 320).clamp(begin, 1.0).toDouble();
+    final interval = Interval(
+      begin,
+      end,
+      curve: Curves.easeOutCubic,
+    );
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        final t = interval.transform(controller.value);
+        return Opacity(
+          opacity: t,
+          child: Transform.translate(
+            offset: Offset(0, 12 * (1 - t)),
+            child: child,
           ),
         );
       },

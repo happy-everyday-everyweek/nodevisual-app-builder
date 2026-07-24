@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'core/constants.dart';
+import 'core/nav_transitions.dart';
 import 'core/theme.dart';
 import 'features/node_graph/function_editor_screen.dart';
 import 'features/node_graph/node_editor_screen.dart';
@@ -33,55 +34,68 @@ class NodeVisualApp extends ConsumerWidget {
 
 /// 全局路由配置。
 ///
-/// 注册主页与项目编辑器路由；后续 Task 按需追加节点详情、设置等子路由。
+/// 所有页面采用 [NavTransitions.slideTransition] "哪去哪回"过渡：
+/// push 进入自右向左滑入，pop 退出原路自左向右滑出，曲线对称反向。
+/// 全屏对话框（如 build）使用 [NavTransitions.fadeTransition] 避免位移叠加。
 final GoRouter _router = GoRouter(
   initialLocation: AppConstants.routeHome,
   routes: <RouteBase>[
     GoRoute(
       path: AppConstants.routeHome,
       name: 'home',
-      builder: (BuildContext context, GoRouterState state) {
-        return const HomeScreen();
-      },
+      pageBuilder: (context, state) => NavTransitions.slideTransition(
+        child: const HomeScreen(),
+        state: state,
+      ),
     ),
     GoRoute(
       path: AppConstants.routeMarketplace,
       name: 'marketplace',
-      builder: (BuildContext context, GoRouterState state) {
-        return const MarketplaceScreen();
-      },
+      pageBuilder: (context, state) => NavTransitions.slideTransition(
+        child: const MarketplaceScreen(),
+        state: state,
+      ),
     ),
     GoRoute(
       path: AppConstants.routeProject,
       name: 'project',
-      builder: (BuildContext context, GoRouterState state) {
+      pageBuilder: (BuildContext context, GoRouterState state) {
         final projectId = state.pathParameters['id']!;
-        return EditorShellScreen(projectId: projectId);
+        return NavTransitions.slideTransition(
+          child: EditorShellScreen(projectId: projectId),
+          state: state,
+        );
       },
       routes: <RouteBase>[
         GoRoute(
           path: 'function/:fid',
           name: 'functionEditor',
-          builder: (BuildContext context, GoRouterState state) {
+          pageBuilder: (BuildContext context, GoRouterState state) {
             final projectId = state.pathParameters['id']!;
             final functionId = state.pathParameters['fid']!;
-            return FunctionEditorScreen(
-              projectId: projectId,
-              functionId: functionId,
+            return NavTransitions.slideTransition(
+              child: FunctionEditorScreen(
+                projectId: projectId,
+                functionId: functionId,
+              ),
+              state: state,
             );
           },
           routes: <RouteBase>[
             GoRoute(
               path: 'node/:nid',
               name: 'nodeEditor',
-              builder: (BuildContext context, GoRouterState state) {
+              pageBuilder: (BuildContext context, GoRouterState state) {
                 final projectId = state.pathParameters['id']!;
                 final functionId = state.pathParameters['fid']!;
                 final nodeId = state.pathParameters['nid']!;
-                return NodeEditorScreen(
-                  projectId: projectId,
-                  functionId: functionId,
-                  nodeId: nodeId,
+                return NavTransitions.slideTransition(
+                  child: NodeEditorScreen(
+                    projectId: projectId,
+                    functionId: functionId,
+                    nodeId: nodeId,
+                  ),
+                  state: state,
                 );
               },
             ),
@@ -90,9 +104,12 @@ final GoRouter _router = GoRouter(
         GoRoute(
           path: 'build',
           name: 'build',
-          builder: (BuildContext context, GoRouterState state) {
+          pageBuilder: (BuildContext context, GoRouterState state) {
             final projectId = state.pathParameters['id']!;
-            return BuildScreen(projectId: projectId);
+            return NavTransitions.fadeTransition(
+              child: BuildScreen(projectId: projectId),
+              state: state,
+            );
           },
         ),
       ],

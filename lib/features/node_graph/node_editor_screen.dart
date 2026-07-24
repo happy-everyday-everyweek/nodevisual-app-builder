@@ -157,6 +157,10 @@ class _NodeEditorBody extends ConsumerWidget {
               for (final p in spec!.paramSchema)
                 _buildParamField(context, ref, p),
             ],
+            // function_call 动态入参：按目标函数 inputs 签名生成参数字段。
+            if (spec!.kind == 'function_call') ...[
+              ..._buildFunctionCallInputFields(context, ref),
+            ],
             const SizedBox(height: 20),
           ],
           _SectionTitle(title: '控制流输出'),
@@ -227,6 +231,20 @@ class _NodeEditorBody extends ConsumerWidget {
           values: _stringListFrom(node.params[p.name]),
           onChanged: (list) => _commitParam(ref, p.name, list),
         );
+      case ParamInputType.keyValueMap:
+        return _KeyValueMapParamField(
+          spec: p,
+          rawMap: node.params[p.name],
+          functionDef: functionDef,
+          project: project,
+          functionId: functionId,
+          nodeId: nodeId,
+          // return 节点的 values 字段：键建议来自函数 outputs 名。
+          suggestedKeys: spec?.kind == 'return'
+              ? functionDef.outputs.map((o) => o.name).toList(growable: false)
+              : const [],
+          onChanged: (m) => _commitParam(ref, p.name, m),
+        );
       case ParamInputType.text:
       case ParamInputType.number:
         return _RefOrTextField(
@@ -243,7 +261,52 @@ class _NodeEditorBody extends ConsumerWidget {
     }
   }
 
-  /// 提交参数变更，并在节点配置了 dynamicOutputs 时同步重新派生输出。
+  /// function_call 动态入参字段：按目标函数 [FunctionDef.inputs] 生成。
+  ///
+  /// 每个入参渲染为一个 `_RefOrTextField`，参数键名为入参名（与执行器
+  /// `_execFunctionCall` 的 `params.entries` 透传逻辑对齐）。
+  /// 目标函数无签名或未选择时返回空列表。
+  List<Widget> _buildFunctionCallInputFields(
+    BuildContext context,
+    WidgetRef ref,
+  ) {
+    final project = this.project;
+    if (project == null) return const [];
+    final targetId = node.params['targetFunctionId']?.toString() ?? '';
+    if (targetId.isEmpty) return const [];
+    FunctionDef? target;
+    for (final f in project.functions) {
+      if (f.id == targetId) {
+        target = f;
+        break;
+      }
+    }
+    if (target == null || target.inputs.isEmpty) return const [];
+    return [
+      for (final input in target.inputs)
+        _RefOrTextField(
+          spec: ParamSpec(
+            name: input.name,
+            label: '${input.name}${input.description != null && input.description!.isNotEmpty ? ' — ${input.description}' : ''}',
+            inputType: ParamInputType.text,
+            acceptsRef: true,
+            expectedType: input.type,
+            defaultValue: input.defaultValue,
+          ),
+          rawValue: node.params[input.name],
+          functionDef: functionDef,
+          project: project,
+          functionId: functionId,
+          nodeId: nodeId,
+          onChanged: (v) => _commitParam(ref, input.name, v),
+          onSetRef: (r) => _commitParam(ref, input.name, r.toJson()),
+          onClearRef: () => _commitParam(ref, input.name, null),
+        ),
+    ];
+  }
+
+  /// 提交参数变更，并在节点配置了 dynamicOutputs / projectOutputs 时同步
+  /// 重新派生输出。
   ///
   /// 单次 [GraphMutator.updateNode] 提交，避免多次落盘的中间态。
   void _commitParam(WidgetRef ref, String name, Object? value) {
@@ -253,7 +316,13 @@ class _NodeEditorBody extends ConsumerWidget {
     newParams[name] = value;
     List<ControlOutput>? ctrl;
     List<DataOutput>? data;
-    if (spec.dynamicOutputs != null) {
+    // projectOutputs（function_call）优先：按目标函数签名动态生成命名数据输出。
+    if (spec.projectOutputs != null) {
+      final fns = project?.functions ?? const <FunctionDef>[];
+      final outs = spec.projectOutputs!(newParams, fns);
+      ctrl = outs.controlOutputs;
+      data = outs.dataOutputs;
+    } else if (spec.dynamicOutputs != null) {
       final outs = spec.dynamicOutputs!(newParams);
       ctrl = outs.controlOutputs;
       data = outs.dataOutputs;
@@ -409,7 +478,7 @@ class _RefOrTextFieldState extends State<_RefOrTextField> {
     _picking = false;
     if (!mounted) return;
     if (selected != null) {
-      widget.onSetRef(selected);
+      widget.onSetRef(selected.ref);
     } else if (clearOnCancel) {
       // 取消 `#` 触发：清回字面值。
       _controller.text = '';
@@ -840,6 +909,319 @@ class _ListStringsParamField extends StatelessWidget {
   }
 }
 
+/// Map 键值对参数（return 的多返回值映射 / db_insert 的 data / ui_navigate 的 params）。
+///
+/// 每行：键（text） + 值（`#` 引用或字面值）。值单元格复用 `_RefOrTextField`
+/// 的内部逻辑，但为简化实现，这里用一个简化的 `_KeyValueRow` 行控件：
+/// 键与值分开编辑，值支持 `#` 引用。
+class _KeyValueMapParamField extends StatelessWidget {
+  const _KeyValueMapParamField({
+    required this.spec,
+    required this.rawMap,
+    required this.functionDef,
+    required this.project,
+    required this.functionId,
+    required this.nodeId,
+    required this.suggestedKeys,
+    required this.onChanged,
+  });
+
+  final ParamSpec spec;
+  final Object? rawMap;
+  final FunctionDef functionDef;
+  final Project? project;
+  final String functionId;
+  final String nodeId;
+  final List<String> suggestedKeys;
+  final ValueChanged<Map<String, dynamic>> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final map = _mapFrom(rawMap);
+    final keys = map.keys.toList();
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Text(spec.label,
+                  style: theme.textTheme.labelLarge
+                      ?.copyWith(fontWeight: FontWeight.w600,),),
+              const Spacer(),
+              Text(
+                '${map.length} 项',
+                style: theme.textTheme.labelSmall,
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          for (var i = 0; i < keys.length; i++)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _KeyValueRow(
+                keyText: keys[i],
+                valueRaw: map[keys[i]],
+                functionDef: functionDef,
+                project: project,
+                functionId: functionId,
+                nodeId: nodeId,
+                expectedType: spec.expectedType ?? PortType.any,
+                suggestedKeys: suggestedKeys,
+                onKeyChanged: (newKey) {
+                  if (newKey.isEmpty || map.containsKey(newKey)) return;
+                  final next = Map<String, dynamic>.from(map);
+                  final v = next.remove(keys[i]);
+                  next[newKey] = v;
+                  onChanged(next);
+                },
+                onValueChanged: (v) {
+                  final next = Map<String, dynamic>.from(map);
+                  next[keys[i]] = v;
+                  onChanged(next);
+                },
+                onSetRef: (r) {
+                  final next = Map<String, dynamic>.from(map);
+                  next[keys[i]] = r.toJson();
+                  onChanged(next);
+                },
+                onClearRef: () {
+                  final next = Map<String, dynamic>.from(map);
+                  next[keys[i]] = null;
+                  onChanged(next);
+                },
+                onRemove: () {
+                  final next = Map<String, dynamic>.from(map);
+                  next.remove(keys[i]);
+                  onChanged(next);
+                },
+              ),
+            ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () {
+                // 若有建议键且未全部使用，自动用下一个建议键；否则用默认键名。
+                final unused = suggestedKeys
+                    .where((k) => !map.containsKey(k))
+                    .toList(growable: false);
+                final newKey = unused.isNotEmpty
+                    ? unused.first
+                    : 'key_${map.length + 1}';
+                onChanged({...map, newKey: null});
+              },
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('添加项'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 从原始值解析为 Map<String, dynamic>。
+  Map<String, dynamic> _mapFrom(Object? v) {
+    if (v is Map) {
+      return Map<String, dynamic>.from(v);
+    }
+    return <String, dynamic>{};
+  }
+}
+
+/// 键值对的单行：键输入 + 值输入（支持 # 引用）。
+class _KeyValueRow extends StatefulWidget {
+  const _KeyValueRow({
+    required this.keyText,
+    required this.valueRaw,
+    required this.functionDef,
+    required this.project,
+    required this.functionId,
+    required this.nodeId,
+    required this.expectedType,
+    required this.suggestedKeys,
+    required this.onKeyChanged,
+    required this.onValueChanged,
+    required this.onSetRef,
+    required this.onClearRef,
+    required this.onRemove,
+  });
+
+  final String keyText;
+  final Object? valueRaw;
+  final FunctionDef functionDef;
+  final Project? project;
+  final String functionId;
+  final String nodeId;
+  final PortType expectedType;
+  final List<String> suggestedKeys;
+  final ValueChanged<String> onKeyChanged;
+  final ValueChanged<String> onValueChanged;
+  final ValueChanged<VariableRef> onSetRef;
+  final VoidCallback onClearRef;
+  final VoidCallback onRemove;
+
+  @override
+  State<_KeyValueRow> createState() => _KeyValueRowState();
+}
+
+class _KeyValueRowState extends State<_KeyValueRow> {
+  late final TextEditingController _keyController;
+  late final TextEditingController _valueController;
+  late final FocusNode _valueFocus;
+  Timer? _debounce;
+  bool _picking = false;
+  bool _clearOnCancel = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _keyController = TextEditingController(text: widget.keyText);
+    _valueController = TextEditingController(text: _stringOf(widget.valueRaw));
+    _valueFocus = FocusNode();
+  }
+
+  @override
+  void didUpdateWidget(covariant _KeyValueRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_keyController.text != widget.keyText) {
+      _keyController.text = widget.keyText;
+    }
+    if (!_valueFocus.hasFocus) {
+      final ext = _stringOf(widget.valueRaw);
+      if (_valueController.text != ext) {
+        _valueController.text = ext;
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _keyController.dispose();
+    _valueController.dispose();
+    _valueFocus.dispose();
+    super.dispose();
+  }
+
+  VariableRef? get _ref => _tryParseRef(widget.valueRaw);
+
+  void _onValueChanged(String text) {
+    widget.onValueChanged(text);
+    if (_picking) return;
+    _debounce?.cancel();
+    if (!text.startsWith('#')) {
+      _clearOnCancel = false;
+      return;
+    }
+    _clearOnCancel = true;
+    final name = text.substring(1);
+    if (name.isEmpty) {
+      _debounce = Timer(const Duration(milliseconds: 300), _openSheet);
+    } else {
+      _debounce = Timer(const Duration(milliseconds: 450), () => _tryQuickRef(name));
+    }
+  }
+
+  void _tryQuickRef(String name) {
+    if (!mounted || _picking) return;
+    final refs = ScopeResolver.matchByName(
+      widget.functionDef,
+      widget.project,
+      widget.nodeId,
+      name,
+    );
+    if (refs.length == 1) {
+      widget.onSetRef(refs.first);
+    } else {
+      _openSheet(initialQuery: name);
+    }
+  }
+
+  Future<void> _openSheet({String? initialQuery}) async {
+    if (_picking) return;
+    _picking = true;
+    _debounce?.cancel();
+    final clearOnCancel = _clearOnCancel;
+    _clearOnCancel = false;
+    final selected = await VariablePickerSheet.show(
+      context,
+      functionId: widget.functionId,
+      nodeId: widget.nodeId,
+      expectedType: widget.expectedType,
+      initialQuery: initialQuery,
+    );
+    _picking = false;
+    if (!mounted) return;
+    if (selected != null) {
+      widget.onSetRef(selected.ref);
+    } else if (clearOnCancel) {
+      _valueController.text = '';
+      widget.onValueChanged('');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final ref = _ref;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 110,
+          child: TextField(
+            controller: _keyController,
+            decoration: const InputDecoration(
+              isDense: true,
+              border: OutlineInputBorder(),
+              hintText: '键',
+            ),
+            onChanged: widget.onKeyChanged,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: ref != null
+              ? _RefDisplay(
+                  ref: ref,
+                  functionDef: widget.functionDef,
+                  project: widget.project,
+                  onClear: widget.onClearRef,
+                  onReselect: _openSheet,
+                )
+              : TextField(
+                  controller: _valueController,
+                  focusNode: _valueFocus,
+                  onChanged: _onValueChanged,
+                  decoration: InputDecoration(
+                    isDense: true,
+                    border: const OutlineInputBorder(),
+                    hintText: '值',
+                    suffixIcon: IconButton(
+                      tooltip: '插入变量引用 (#)',
+                      icon: const Icon(Icons.tag, size: 18),
+                      onPressed: () {
+                        _clearOnCancel = false;
+                        _openSheet();
+                      },
+                    ),
+                  ),
+                ),
+        ),
+        IconButton(
+          tooltip: '删除项',
+          icon: Icon(Icons.remove_circle_outline,
+              size: 20, color: theme.colorScheme.error,),
+          onPressed: widget.onRemove,
+          visualDensity: VisualDensity.compact,
+        ),
+      ],
+    );
+  }
+}
+
 // ---- 输出展示 ----
 
 class _ControlOutputsCard extends StatelessWidget {
@@ -1079,12 +1461,16 @@ class _CategoryChip extends StatelessWidget {
         return '变量';
       case NodeCategory.operation:
         return '运算';
+      case NodeCategory.logic:
+        return '逻辑';
       case NodeCategory.flow:
         return '流程';
       case NodeCategory.database:
         return '数据库';
       case NodeCategory.function:
         return '函数';
+      case NodeCategory.uiControl:
+        return 'UI 控制';
       case NodeCategory.plugin:
         return '插件';
     }
@@ -1117,7 +1503,8 @@ String _stringOf(Object? v) {
 /// - upstream：`#节点展示名.输出名`（节点展示名取自 [NodeKindRegistry]，
 ///   未注册回退 kind；找不到节点 / 输出时回退 `#nodeId.outputName`）；
 /// - funcVar：`#变量名`（找不到回退 `#func:varId`）；
-/// - projVar：`#变量名`（找不到回退 `#proj:varId`）。
+/// - projVar：`#变量名`（找不到回退 `#proj:varId`）；
+/// - component：`#组件展示名.字段名`（找不到回退 `#component:componentId.fieldName`）。
 String _refDisplayLabel(VariableRef ref, FunctionDef fn, Project? project) {
   switch (ref.source) {
     case VariableSource.upstream:
@@ -1134,6 +1521,17 @@ String _refDisplayLabel(VariableRef ref, FunctionDef fn, Project? project) {
       }
       return '#$nodeId.$outputName';
     case VariableSource.funcVar:
+      // 页面级函数 outputs：`#函数展示名.输出名`（找不到回退 `#pageFunc:funcId.outputName`）。
+      if (ref.isPageFunc) {
+        final funcId = ref.funcId!;
+        final outputName = ref.outputName!;
+        if (project != null) {
+          for (final f in project.functions) {
+            if (f.id == funcId) return '#${f.name}.$outputName';
+          }
+        }
+        return '#pageFunc:$funcId.$outputName';
+      }
       final varId = ref.varId;
       if (varId == null) return '#<无效引用>';
       for (final v in fn.funcVars) {
@@ -1149,6 +1547,13 @@ String _refDisplayLabel(VariableRef ref, FunctionDef fn, Project? project) {
         }
       }
       return '#proj:$varId';
+    case VariableSource.component:
+      final componentId = ref.componentId;
+      final fieldName = ref.fieldName;
+      if (componentId == null || fieldName == null) {
+        return '#<无效引用>';
+      }
+      return '#component:$componentId.$fieldName';
   }
 }
 
