@@ -5,6 +5,13 @@ import 'package:http/http.dart' as http;
 import '../plugins/plugin_spec.dart';
 import 'plugin_manifest.dart';
 
+/// 模板变量替换的编码策略。
+///
+/// - [url]：对替换值做 URL 编码（百分号编码），适合放在 URL 路径 / 查询段。
+/// - [raw]：直接替换为原始字符串，不做编码（适合 headers）。
+/// - [json]：对字符串值做 JSON 字符串转义（适合嵌入 JSON body）。
+enum _EncodeMode { url, raw, json }
+
 /// HTTP 插件执行器。
 ///
 /// 根据 [PluginManifest] 中的 [HttpExecutorDef] 模板构造 HTTP 请求，
@@ -95,13 +102,6 @@ class HttpPluginExecutor implements PluginExecutor {
 
     return outputs;
   }
-
-  /// 模板变量替换的编码策略。
-  ///
-  /// - [url]：对替换值做 URL 编码（百分号编码），适合放在 URL 路径 / 查询段。
-  /// - [raw]：直接替换为原始字符串，不做编码（适合 headers）。
-  /// - [json]：对字符串值做 JSON 字符串转义（适合嵌入 JSON body）。
-  enum _EncodeMode { url, raw, json }
 
   /// 渲染模板字符串，按 [mode] 决定替换值的编码方式。
   String _renderTemplate(

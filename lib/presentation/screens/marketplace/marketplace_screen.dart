@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../features/marketplace/marketplace_entry.dart';
-import '../../features/marketplace/marketplace_providers.dart';
-import '../../features/marketplace/plugin_manifest.dart';
-import '../../features/plugins/plugin_config_storage.dart';
-import '../../features/plugins/plugin_spec.dart';
+import '../../../features/marketplace/marketplace_entry.dart';
+import '../../../features/marketplace/marketplace_providers.dart';
+import '../../../features/marketplace/plugin_manifest.dart';
+import '../../../features/plugins/plugin_config_storage.dart';
+import '../../../features/plugins/plugin_spec.dart';
 
 /// 插件市场屏幕：浏览 / 搜索 / 安装 / 卸载 / 配置。
 ///

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Page;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/entry.dart';
@@ -396,7 +396,7 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
       case 'spacer':
         final flex = (node.props['flex'] as num?)?.toInt() ?? 1;
         return SizedBox(
-          height: 8 * flex,
+          height: 8.0 * flex,
           child: const Center(
             child: Text('· · ·',
                 style: TextStyle(color: Colors.grey, fontSize: 10)),
@@ -808,7 +808,6 @@ class _SelectionWrapper extends StatelessWidget {
       onLongPress: onLongPress,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
-        reverseDuration: const Duration(milliseconds: 160),
         curve: Curves.easeOutCubic,
         decoration: BoxDecoration(
           border: Border.all(
@@ -1348,7 +1347,7 @@ class _PropEditorState extends ConsumerState<_PropEditor> {
       case _PropKind.dropdown:
         final current = '${widget.node.props[desc.key] ?? desc.options?.first}';
         return DropdownButtonFormField<String>(
-          initialValue:
+          value:
               desc.options!.contains(current) ? current : desc.options!.first,
           decoration: const InputDecoration(
             isDense: true,
@@ -1681,7 +1680,7 @@ class _TriggerEditor extends ConsumerWidget {
           Expanded(
             flex: 3,
             child: DropdownButtonFormField<String>(
-              initialValue: functions.any((f) => f.id == currentFuncId)
+              value: functions.any((f) => f.id == currentFuncId)
                   ? currentFuncId
                   : null,
               isDense: true,
@@ -1783,7 +1782,7 @@ class _TimerEntrySheetState extends ConsumerState<_TimerEntrySheet> {
                   ),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
-                initialValue: _selectedTimerFuncId != null &&
+                value: _selectedTimerFuncId != null &&
                         functions.any((f) => f.id == _selectedTimerFuncId)
                     ? _selectedTimerFuncId
                     : null,
@@ -1855,7 +1854,7 @@ class _TimerEntrySheetState extends ConsumerState<_TimerEntrySheet> {
                   ),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
-                initialValue: _selectedExtFuncId != null &&
+                value: _selectedExtFuncId != null &&
                         functions.any((f) => f.id == _selectedExtFuncId)
                     ? _selectedExtFuncId
                     : null,
@@ -2145,7 +2144,7 @@ class _PageEventRow extends ConsumerWidget {
           Expanded(
             child: DropdownButtonFormField<String>(
               isDense: true,
-              initialValue:
+              value:
                   functions.any((f) => f.id == currentFuncId) ? currentFuncId : null,
               decoration: InputDecoration(
                 isDense: true,

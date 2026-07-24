@@ -108,7 +108,7 @@ class InstalledPluginsNotifier
 
 /// 市场索引 provider（远程拉取）。
 final marketplaceIndexProvider =
-    FutureProvider.autoRef<MarketplaceIndex>((ref) async {
+    FutureProvider.autoDispose<MarketplaceIndex>((ref) async {
   final client = ref.watch(marketplaceClientProvider);
   return client.fetchIndex();
 });

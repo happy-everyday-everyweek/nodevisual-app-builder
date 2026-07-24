@@ -568,7 +568,7 @@ class _ColumnRowState extends ConsumerState<_ColumnRow> {
           Expanded(
             flex: 2,
             child: DropdownButtonFormField<String>(
-              initialValue: _kColumnTypes.contains(widget.column.type)
+              value: _kColumnTypes.contains(widget.column.type)
                   ? widget.column.type
                   : _kColumnTypes.first,
               decoration: const InputDecoration(
