@@ -32,16 +32,16 @@ class SharedPreferencesLocalStorage implements LocalStorage {
   Future<List<ProjectMeta>> _readIndex() async {
     final prefs = await _sp();
     final raw = prefs.getString(_indexKey);
-    if (raw == null || raw.isEmpty) return const [];
+    if (raw == null || raw.isEmpty) return <ProjectMeta>[];
     try {
       final decoded = jsonDecode(raw);
-      if (decoded is! List) return const [];
+      if (decoded is! List) return <ProjectMeta>[];
       return decoded
           .whereType<Map<String, dynamic>>()
           .map(ProjectMeta.fromJson)
           .toList();
     } catch (_) {
-      return const [];
+      return <ProjectMeta>[];
     }
   }
 
@@ -59,7 +59,7 @@ class SharedPreferencesLocalStorage implements LocalStorage {
 
   @override
   Future<List<ProjectMeta>> listProjects() async {
-    final metas = await _readIndex();
+    final metas = List<ProjectMeta>.from(await _readIndex());
     metas.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
     return metas;
   }
