@@ -1,3 +1,5 @@
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -14,10 +16,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.nodevisual.nodevisual_app_builder"
@@ -25,8 +23,10 @@ android {
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
-        versionCode = flutter.versionCode
-        versionName = flutter.versionName
+        // versionCode/versionName 直接硬编码，避免 flutter.versionCode 在
+        // AGP 8.5.2 Kotlin DSL 中的函数调用兼容性问题。
+        versionCode = 1
+        versionName = "0.1.0"
     }
 
     buildTypes {
@@ -35,6 +35,15 @@ android {
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
         }
+    }
+}
+
+// Kotlin JVM target 与 Java 17 对齐。
+// 在 AGP 8.5.2 + Kotlin 1.9.10 中，android {} 内的 kotlinOptions 块不可用，
+// 改用 tasks.withType<KotlinCompile> 配置。
+tasks.withType<KotlinCompile>().configureEach {
+    kotlinOptions {
+        jvmTarget = "17"
     }
 }
 
