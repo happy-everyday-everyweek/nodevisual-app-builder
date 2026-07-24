@@ -6,6 +6,7 @@ import '../../../features/marketplace/marketplace_entry.dart';
 import '../../../features/marketplace/marketplace_providers.dart';
 import '../../../features/marketplace/plugin_manifest.dart';
 import '../../../features/plugins/plugin_config_storage.dart';
+import '../../../features/plugins/plugin_registry.dart';
 import '../../../features/plugins/plugin_spec.dart';
 
 /// 插件市场屏幕：浏览 / 搜索 / 安装 / 卸载 / 配置。
