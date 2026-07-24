@@ -15,6 +15,17 @@ class DbQueryResult {
   const DbQueryResult({required this.rows, required this.count});
 }
 
+/// 数据库批量插入结果。
+class DbBatchInsertResult {
+  /// 各行插入后的主键 id 列表。
+  final List<int> insertedIds;
+
+  /// 受影响总行数。
+  final int affected;
+
+  const DbBatchInsertResult({required this.insertedIds, required this.affected});
+}
+
 /// 数据库插入结果。
 class DbInsertResult {
   /// 新插入行的主键 id（自增列）。
@@ -80,10 +91,12 @@ class DatabaseExecutor {
   ///
   /// [filter] 为 WHERE 子句字符串（不含 `WHERE` 关键字），可空。
   /// [limit] 为限制行数，可空。
+  /// [orderBy] 为 ORDER BY 子句字符串（不含 `ORDER BY` 关键字），可空。
   Future<DbQueryResult> query(
     String table, {
     String? filter,
     int? limit,
+    String? orderBy,
   }) async {
     final db = await _database();
     final where = filter != null && filter.isNotEmpty ? filter : null;
@@ -91,8 +104,50 @@ class DatabaseExecutor {
       table,
       where: where,
       limit: limit,
+      orderBy: orderBy,
     );
     return DbQueryResult(rows: rows, count: rows.length);
+  }
+
+  /// 聚合查询：执行 `SELECT func(column) FROM table WHERE filter`。
+  ///
+  /// [func] 支持 `count` / `sum` / `avg` / `min` / `max`。
+  /// [column] 对 count 可空（`COUNT(*)`），其余必填。
+  /// 返回聚合结果（count 永远返回 int，其余可能为 null 当表空时）。
+  Future<num?> queryAggregate(
+    String table, {
+    required String func,
+    String? column,
+    String? filter,
+  }) async {
+    final db = await _database();
+    final f = func.toLowerCase();
+    final col = (column == null || column.isEmpty) ? '*' : column;
+    final where = filter != null && filter.isNotEmpty ? filter : null;
+    final rows = await db.rawQuery(
+      'SELECT $f($col) AS v FROM $table${where != null ? ' WHERE $where' : ''}',
+    );
+    if (rows.isEmpty) return f == 'count' ? 0 : null;
+    final v = rows.first['v'];
+    if (v == null) return null;
+    if (v is num) return v;
+    return num.tryParse(v.toString()) ?? 0;
+  }
+
+  /// 批量插入多行。
+  ///
+  /// [rows] 为待插入的行列表。返回插入的 id 列表与受影响总行数。
+  Future<DbBatchInsertResult> insertBatch(
+    String table,
+    List<Map<String, Object?>> rows,
+  ) async {
+    final db = await _database();
+    final ids = <int>[];
+    for (final row in rows) {
+      final id = await db.insert(table, row);
+      ids.add(id);
+    }
+    return DbBatchInsertResult(insertedIds: ids, affected: ids.length);
   }
 
   /// INSERT 一行。

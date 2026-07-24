@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import '../../../data/models/control_edge.dart';
 import '../../../data/models/db_schema.dart';
@@ -10,6 +11,7 @@ import '../../plugins/plugin_config_storage.dart';
 import '../../plugins/plugin_registry.dart';
 import 'database_executor.dart';
 import 'runtime_scope.dart';
+import 'runtime_ui_state.dart';
 
 /// 函数执行结果。
 ///
@@ -104,6 +106,9 @@ class ExecContext {
   /// 数据库执行器，可空（为空时 db_* 节点抛错）。
   final DatabaseExecutor? dbExecutor;
 
+  /// 运行时 UI 状态覆盖层，可空（为空时 ui_* 节点写入会被忽略，不抛错）。
+  final RuntimeUiState? uiState;
+
   const ExecContext({
     required this.node,
     required this.function,
@@ -113,6 +118,7 @@ class ExecContext {
     required this.pluginRegistry,
     this.pluginConfigStorage,
     this.dbExecutor,
+    this.uiState,
   });
 }
 
@@ -152,28 +158,55 @@ Object? _resolveVariableRef(VariableRef ref, RuntimeScope scope) {
 /// 异常由调用方（[NodeInterpreter]）捕获并记录到 [RunResult.error]。
 Future<NodeExecResult> executeNode(ExecContext ctx) async {
   switch (ctx.node.kind) {
+    // ---- 变量 ----
     case 'variable_set':
       return _execVariableSet(ctx);
-    case 'variable_get':
-      return _execVariableGet(ctx);
+
+    // ---- 运算 ----
     case 'arithmetic':
       return _execArithmetic(ctx);
-    case 'logic':
-      return _execLogic(ctx);
+    case 'math_func':
+      return _execMathFunc(ctx);
     case 'string_op':
       return _execStringOp(ctx);
+    case 'list_op':
+      return _execListOp(ctx);
+    case 'date_op':
+      return _execDateOp(ctx);
+
+    // ---- 逻辑 ----
+    case 'logic':
+      return _execLogic(ctx);
+    case 'compare':
+      return _execCompare(ctx);
+    case 'type_check':
+      return _execTypeCheck(ctx);
+    case 'ternary':
+      return _execTernary(ctx);
+
+    // ---- 流程控制 ----
     case 'if':
       return _execIf(ctx);
     case 'loop':
       return _execLoop(ctx);
-    case 'function_call':
-      return _execFunctionCall(ctx);
     case 'return':
       return _execReturn(ctx);
-    case 'db_query':
-      return _execDbQuery(ctx);
+
+    // ---- 函数调用 ----
+    case 'function_call':
+      return _execFunctionCall(ctx);
+
+    // ---- 数据库 ----
+    case 'db_query_one':
+      return _execDbQueryOne(ctx);
+    case 'db_query_rows':
+      return _execDbQueryRows(ctx);
+    case 'db_aggregate':
+      return _execDbAggregate(ctx);
     case 'db_insert':
       return _execDbInsert(ctx);
+    case 'db_insert_rows':
+      return _execDbInsertRows(ctx);
     case 'db_update':
       return _execDbUpdate(ctx);
     case 'db_delete':
@@ -182,10 +215,27 @@ Future<NodeExecResult> executeNode(ExecContext ctx) async {
       return _execDbCreateTable(ctx);
     case 'db_alter_table':
       return _execDbAlterTable(ctx);
+
+    // ---- UI 控制 ----
+    case 'ui_set_text':
+      return _execUiSetText(ctx);
+    case 'ui_set_visible':
+      return _execUiSetVisible(ctx);
+    case 'ui_set_enabled':
+      return _execUiSetEnabled(ctx);
+    case 'ui_set_prop':
+      return _execUiSetProp(ctx);
+    case 'ui_navigate':
+      return _execUiNavigate(ctx);
+    case 'ui_show_toast':
+      return _execUiShowToast(ctx);
+
+    // ---- 内置插件 ----
     case 'plugin_openai':
       return _execPlugin(ctx, 'llm_openai');
     case 'plugin_anthropic':
       return _execPlugin(ctx, 'llm_anthropic');
+
     default:
       // 市场插件节点（kind = plugin_<id>）：提取 pluginId 并执行。
       if (ctx.node.kind.startsWith('plugin_')) {
@@ -219,29 +269,11 @@ Future<NodeExecResult> _execVariableSet(ExecContext ctx) async {
   return const NodeExecResult(nextControlOutput: 'next');
 }
 
-/// variable_get：dataOutputs[value] = scope[params['varName']]。
-Future<NodeExecResult> _execVariableGet(ExecContext ctx) async {
-  final params = ctx.node.params;
-  final varName = params['varName']?.toString() ?? '';
-  Object? value;
-  for (final v in ctx.function.funcVars) {
-    if (v.name == varName) {
-      value = ctx.scope.getFuncVar(v.id);
-      break;
-    }
-  }
-  return NodeExecResult(
-    dataOutputs: {'value': value},
-    nextControlOutput: 'next',
-  );
-}
-
 // ===========================================================================
 // 运算节点
 // ===========================================================================
 
-/// arithmetic：a=resolveRef(params['a']), b=resolveRef(params['b'])，
-/// 按 operator 计算，dataOutputs[result]。
+/// arithmetic：a op b；支持 + - * / % // ^（幂）。
 Future<NodeExecResult> _execArithmetic(ExecContext ctx) async {
   final params = ctx.node.params;
   final op = params['operator']?.toString() ?? '+';
@@ -251,25 +283,22 @@ Future<NodeExecResult> _execArithmetic(ExecContext ctx) async {
   switch (op) {
     case '+':
       result = (a ?? 0) + (b ?? 0);
-      break;
     case '-':
       result = (a ?? 0) - (b ?? 0);
-      break;
     case '*':
       result = (a ?? 0) * (b ?? 0);
-      break;
     case '/':
-      if (b == null || b == 0) {
-        throw StateError('除数为零');
-      }
+      if (b == null || b == 0) throw StateError('除数为零');
       result = a! / b;
-      break;
     case '%':
-      if (b == null || b == 0) {
-        throw StateError('取模数为零');
-      }
+      if (b == null || b == 0) throw StateError('取模数为零');
       result = a!.toInt() % b.toInt();
-      break;
+    case '//':
+      if (b == null || b == 0) throw StateError('整除数为零');
+      result = (a! / b).floor();
+    case '^':
+    case 'pow':
+      result = math.pow((a ?? 0).toDouble(), (b ?? 0).toDouble());
     default:
       throw StateError('未知运算符: $op');
   }
@@ -279,7 +308,224 @@ Future<NodeExecResult> _execArithmetic(ExecContext ctx) async {
   );
 }
 
-/// logic：按 operator（and/or/not）计算。
+/// math_func：单参数数学函数；func ∈ abs/round/floor/ceil/sqrt/log/sin/cos/tan/random/min/max。
+/// min/max 为双参数（a, b），其余单参数（a）。
+Future<NodeExecResult> _execMathFunc(ExecContext ctx) async {
+  final params = ctx.node.params;
+  final fn = params['func']?.toString() ?? 'abs';
+  final a = _toNum(resolveRef(params['a'], ctx.scope))?.toDouble() ?? 0.0;
+  final b = _toNum(resolveRef(params['b'], ctx.scope))?.toDouble();
+  double result;
+  switch (fn) {
+    case 'abs':
+      result = a.abs();
+    case 'round':
+      result = a.roundToDouble();
+    case 'floor':
+      result = a.floorToDouble();
+    case 'ceil':
+      result = a.ceilToDouble();
+    case 'sqrt':
+      result = math.sqrt(a);
+    case 'log':
+      result = math.log(a);
+    case 'sin':
+      result = math.sin(a);
+    case 'cos':
+      result = math.cos(a);
+    case 'tan':
+      result = math.tan(a);
+    case 'min':
+      result = b == null ? a : math.min(a, b);
+    case 'max':
+      result = b == null ? a : math.max(a, b);
+    case 'random':
+      // 0..a（含 0 不含 a），默认 1。
+      final max = a > 0 ? a : 1.0;
+      result = math.Random().nextDouble() * max;
+    default:
+      throw StateError('未知数学函数: $fn');
+  }
+  // 整数函数返回 int 以保持类型友好。
+  final out = (fn == 'round' || fn == 'floor' || fn == 'ceil' || fn == 'abs')
+      ? result.toInt() as Object
+      : result as Object;
+  return NodeExecResult(
+    dataOutputs: {'result': out},
+    nextControlOutput: 'next',
+  );
+}
+
+/// string_op：扩展字符串操作。
+/// operation ∈ concat/substring/upper/lower/length/replace/split/trim/
+///   contains/startsWith/endsWith/indexOf/format/padLeft/padRight/reverse/repeat
+Future<NodeExecResult> _execStringOp(ExecContext ctx) async {
+  final params = ctx.node.params;
+  final op = params['operation']?.toString() ?? 'concat';
+  final a = resolveRef(params['a'], ctx.scope)?.toString() ?? '';
+  final b = resolveRef(params['b'], ctx.scope)?.toString() ?? '';
+  final c = resolveRef(params['c'], ctx.scope)?.toString() ?? '';
+  switch (op) {
+    case 'concat':
+      return _ok({'result': a + b});
+    case 'substring':
+      // b = "start,end" 或 "start"。
+      final parts = b.split(',');
+      final start = (int.tryParse(parts[0]) ?? 0).clamp(0, a.length);
+      final end = parts.length > 1
+          ? (int.tryParse(parts[1]) ?? a.length).clamp(0, a.length)
+          : a.length;
+      return _ok({'result': a.substring(start, end)});
+    case 'upper':
+      return _ok({'result': a.toUpperCase()});
+    case 'lower':
+      return _ok({'result': a.toLowerCase()});
+    case 'length':
+      return _ok({'length': a.length, 'result': a.length});
+    case 'replace':
+      return _ok({'result': a.replaceAll(b, c)});
+    case 'split':
+      return _ok({'result': a.split(b)});
+    case 'trim':
+      return _ok({'result': a.trim()});
+    case 'contains':
+      return _ok({'result': a.contains(b)});
+    case 'startsWith':
+      return _ok({'result': a.startsWith(b)});
+    case 'endsWith':
+      return _ok({'result': a.endsWith(b)});
+    case 'indexOf':
+      return _ok({'result': a.indexOf(b)});
+    case 'format':
+      // 简易：将 {0} {1} ... 占位替换为 b, c, ... 拆分。
+      final args = [b, c, ..._toList(resolveRef(params['args'], ctx.scope))];
+      var out = a;
+      for (var i = 0; i < args.length; i++) {
+        out = out.replaceAll('{$i}', args[i].toString());
+      }
+      return _ok({'result': out});
+    case 'padLeft':
+      final w = int.tryParse(b) ?? a.length;
+      return _ok({'result': a.padLeft(w, c.isEmpty ? ' ' : c[0])});
+    case 'padRight':
+      final w = int.tryParse(b) ?? a.length;
+      return _ok({'result': a.padRight(w, c.isEmpty ? ' ' : c[0])});
+    case 'reverse':
+      return _ok({'result': a.split('').reversed.join()});
+    case 'repeat':
+      final n = int.tryParse(b) ?? 1;
+      return _ok({'result': a * n});
+    default:
+      throw StateError('未知字符串操作: $op');
+  }
+}
+
+/// list_op：列表操作。
+/// operation ∈ size/get/contains/append/removeAt/slice/reverse/sort/unique/join/concat/map/filter/indexOf
+Future<NodeExecResult> _execListOp(ExecContext ctx) async {
+  final params = ctx.node.params;
+  final op = params['operation']?.toString() ?? 'size';
+  final list = _toList(resolveRef(params['a'], ctx.scope));
+  final b = resolveRef(params['b'], ctx.scope);
+  switch (op) {
+    case 'size':
+      return _ok({'result': list.length, 'size': list.length});
+    case 'get':
+      final i = _toInt(b);
+      return _ok({'result': i >= 0 && i < list.length ? list[i] : null});
+    case 'contains':
+      return _ok({'result': list.contains(b)});
+    case 'indexOf':
+      return _ok({'result': list.indexOf(b)});
+    case 'append':
+      return _ok({'result': [...list, b]});
+    case 'removeAt':
+      final i = _toInt(b);
+      final out = List<Object?>.from(list);
+      if (i >= 0 && i < out.length) out.removeAt(i);
+      return _ok({'result': out});
+    case 'slice':
+      // b = "start,end"
+      final parts = b?.toString().split(',') ?? ['0'];
+      final start = (int.tryParse(parts[0]) ?? 0).clamp(0, list.length);
+      final end = parts.length > 1
+          ? (int.tryParse(parts[1]) ?? list.length).clamp(0, list.length)
+          : list.length;
+      return _ok({'result': list.sublist(start, end)});
+    case 'reverse':
+      return _ok({'result': list.reversed.toList()});
+    case 'sort':
+      final nums = list.whereType<num>().toList()..sort();
+      return _ok({'result': nums});
+    case 'unique':
+      final seen = <Object?>{};
+      final out = <Object?>[];
+      for (final e in list) {
+        if (seen.add(e)) out.add(e);
+      }
+      return _ok({'result': out});
+    case 'join':
+      final sep = b?.toString() ?? ',';
+      return _ok({'result': list.map((e) => e?.toString() ?? '').join(sep)});
+    case 'concat':
+      final other = _toList(b);
+      return _ok({'result': [...list, ...other]});
+    default:
+      throw StateError('未知列表操作: $op');
+  }
+}
+
+/// date_op：日期时间操作。
+/// operation ∈ now/format/parse/add/diff/year/month/day/hour/minute/second/weekday
+Future<NodeExecResult> _execDateOp(ExecContext ctx) async {
+  final params = ctx.node.params;
+  final op = params['operation']?.toString() ?? 'now';
+  final aStr = resolveRef(params['a'], ctx.scope)?.toString();
+  switch (op) {
+    case 'now':
+      return _ok({'result': DateTime.now().toIso8601String()});
+    case 'parse':
+      final dt = aStr != null ? DateTime.tryParse(aStr) : null;
+      if (dt == null) throw StateError('无法解析日期: $aStr');
+      return _ok({'result': dt.toIso8601String(), 'timestamp': dt.millisecondsSinceEpoch});
+    case 'format':
+      // 简易：b = 模板（YYYY-MM-DD 等），仅支持常用占位符。
+      final dt = aStr != null ? (DateTime.tryParse(aStr) ?? DateTime.now()) : DateTime.now();
+      return _ok({'result': _formatDate(dt, b?.toString() ?? 'YYYY-MM-DD')});
+    case 'year':
+    case 'month':
+    case 'day':
+    case 'hour':
+    case 'minute':
+    case 'second':
+    case 'weekday':
+      final dt = aStr != null ? (DateTime.tryParse(aStr) ?? DateTime.now()) : DateTime.now();
+      final v = _dateField(dt, op);
+      return _ok({'result': v});
+    case 'add':
+      // b = "amount,unit" 如 "1,days"
+      final dt = aStr != null ? (DateTime.tryParse(aStr) ?? DateTime.now()) : DateTime.now();
+      final parts = b?.toString().split(',') ?? ['0', 'days'];
+      final amount = int.tryParse(parts[0]) ?? 0;
+      final unit = parts.length > 1 ? parts[1] : 'days';
+      final out = _addDuration(dt, amount, unit);
+      return _ok({'result': out.toIso8601String()});
+    case 'diff':
+      // a, b 为两个日期，返回相差天数。
+      final d1 = aStr != null ? (DateTime.tryParse(aStr) ?? DateTime.now()) : DateTime.now();
+      final d2 = b != null ? (DateTime.tryParse(b.toString()) ?? DateTime.now()) : DateTime.now();
+      final diff = d2.difference(d1).inDays;
+      return _ok({'result': diff});
+    default:
+      throw StateError('未知日期操作: $op');
+  }
+}
+
+// ===========================================================================
+// 逻辑节点
+// ===========================================================================
+
+/// logic：and/or/not/xor/nand/nor。
 Future<NodeExecResult> _execLogic(ExecContext ctx) async {
   final params = ctx.node.params;
   final op = params['operator']?.toString() ?? 'and';
@@ -289,13 +535,16 @@ Future<NodeExecResult> _execLogic(ExecContext ctx) async {
   switch (op) {
     case 'and':
       result = a && b;
-      break;
     case 'or':
       result = a || b;
-      break;
     case 'not':
       result = !a;
-      break;
+    case 'xor':
+      result = a != b;
+    case 'nand':
+      result = !(a && b);
+    case 'nor':
+      result = !(a || b);
     default:
       throw StateError('未知逻辑运算符: $op');
   }
@@ -305,47 +554,195 @@ Future<NodeExecResult> _execLogic(ExecContext ctx) async {
   );
 }
 
-/// string_op：按 operation（concat/substring/upper/lower/length）。
-Future<NodeExecResult> _execStringOp(ExecContext ctx) async {
+/// compare：比较 ==/!=/>/<>=/<=/between。
+Future<NodeExecResult> _execCompare(ExecContext ctx) async {
   final params = ctx.node.params;
-  final op = params['operation']?.toString() ?? 'concat';
-  final a = resolveRef(params['a'], ctx.scope)?.toString() ?? '';
-  final b = resolveRef(params['b'], ctx.scope)?.toString() ?? '';
+  final op = params['operator']?.toString() ?? '==';
+  final a = resolveRef(params['a'], ctx.scope);
+  final b = resolveRef(params['b'], ctx.scope);
+  final na = _toNum(a);
+  final nb = _toNum(b);
+  bool result;
   switch (op) {
-    case 'concat':
-      return NodeExecResult(
-        dataOutputs: {'result': a + b},
-        nextControlOutput: 'next',
-      );
-    case 'substring':
-      // b 形如 "start,end" 或 "start"。
-      final parts = b.split(',');
-      final start = (int.tryParse(parts[0]) ?? 0).clamp(0, a.length);
-      final end = parts.length > 1
-          ? (int.tryParse(parts[1]) ?? a.length).clamp(0, a.length)
-          : a.length;
-      return NodeExecResult(
-        dataOutputs: {'result': a.substring(start, end)},
-        nextControlOutput: 'next',
-      );
-    case 'upper':
-      return NodeExecResult(
-        dataOutputs: {'result': a.toUpperCase()},
-        nextControlOutput: 'next',
-      );
-    case 'lower':
-      return NodeExecResult(
-        dataOutputs: {'result': a.toLowerCase()},
-        nextControlOutput: 'next',
-      );
-    case 'length':
-      return NodeExecResult(
-        dataOutputs: {'length': a.length},
-        nextControlOutput: 'next',
-      );
+    case '==':
+      result = a == b;
+    case '!=':
+      result = a != b;
+    case '>':
+      result = (na ?? double.negativeInfinity) > (nb ?? double.negativeInfinity);
+    case '<':
+      result = (na ?? double.infinity) < (nb ?? double.infinity);
+    case '>=':
+      result = (na ?? double.negativeInfinity) >= (nb ?? double.negativeInfinity);
+    case '<=':
+      result = (na ?? double.infinity) <= (nb ?? double.infinity);
+    case 'between':
+      // a 在 [b, c] 之间。
+      final c = _toNum(resolveRef(params['c'], ctx.scope));
+      result = na != null && (c != null ? (na >= nb! && na <= c) : (na >= nb!));
     default:
-      throw StateError('未知字符串操作: $op');
+      throw StateError('未知比较运算符: $op');
   }
+  return NodeExecResult(
+    dataOutputs: {'result': result},
+    nextControlOutput: 'next',
+  );
+}
+
+/// type_check：类型判断 isNull/isNotNull/isNumber/isString/isBool/isList/isMap。
+Future<NodeExecResult> _execTypeCheck(ExecContext ctx) async {
+  final params = ctx.node.params;
+  final fn = params['check']?.toString() ?? 'isNull';
+  final v = resolveRef(params['a'], ctx.scope);
+  bool result;
+  switch (fn) {
+    case 'isNull':
+      result = v == null;
+    case 'isNotNull':
+      result = v != null;
+    case 'isNumber':
+      result = v is num;
+    case 'isString':
+      result = v is String;
+    case 'isBool':
+      result = v is bool;
+    case 'isList':
+      result = v is List;
+    case 'isMap':
+      result = v is Map;
+    default:
+      throw StateError('未知类型检查: $fn');
+  }
+  return NodeExecResult(
+    dataOutputs: {'result': result},
+    nextControlOutput: 'next',
+  );
+}
+
+/// ternary：condition ? trueValue : falseValue。
+Future<NodeExecResult> _execTernary(ExecContext ctx) async {
+  final params = ctx.node.params;
+  final cond = _toBool(resolveRef(params['condition'], ctx.scope));
+  final trueVal = resolveRef(params['trueValue'], ctx.scope);
+  final falseVal = resolveRef(params['falseValue'], ctx.scope);
+  return NodeExecResult(
+    dataOutputs: {'result': cond ? trueVal : falseVal},
+    nextControlOutput: 'next',
+  );
+}
+
+// ===========================================================================
+// 数据库节点
+// ===========================================================================
+
+/// db_query_one：查询单行（返回第一行）。
+Future<NodeExecResult> _execDbQueryOne(ExecContext ctx) async {
+  final db = _requireDb(ctx);
+  final params = ctx.node.params;
+  final table = params['table']?.toString() ?? '';
+  if (table.isEmpty) throw StateError('db_query_one 未指定 table');
+  final filter = resolveRef(params['filter'], ctx.scope)?.toString();
+  final orderBy = resolveRef(params['orderBy'], ctx.scope)?.toString();
+  final result = await db.query(table, filter: filter, limit: 1, orderBy: orderBy);
+  final row = result.rows.isNotEmpty ? result.rows.first : null;
+  return NodeExecResult(
+    dataOutputs: {'row': row, 'found': row != null},
+    nextControlOutput: 'next',
+  );
+}
+
+/// db_query_rows：查询多行。
+Future<NodeExecResult> _execDbQueryRows(ExecContext ctx) async {
+  final db = _requireDb(ctx);
+  final params = ctx.node.params;
+  final table = params['table']?.toString() ?? '';
+  if (table.isEmpty) throw StateError('db_query_rows 未指定 table');
+  final filter = resolveRef(params['filter'], ctx.scope)?.toString();
+  final limit = _toInt(resolveRef(params['limit'], ctx.scope));
+  final orderBy = resolveRef(params['orderBy'], ctx.scope)?.toString();
+  final result = await db.query(table,
+      filter: filter, limit: limit > 0 ? limit : null, orderBy: orderBy);
+  return NodeExecResult(
+    dataOutputs: {'rows': result.rows, 'count': result.count},
+    nextControlOutput: 'next',
+  );
+}
+
+/// db_aggregate：聚合统计 sum/avg/count/min/max。
+Future<NodeExecResult> _execDbAggregate(ExecContext ctx) async {
+  final db = _requireDb(ctx);
+  final params = ctx.node.params;
+  final table = params['table']?.toString() ?? '';
+  if (table.isEmpty) throw StateError('db_aggregate 未指定 table');
+  final func = params['func']?.toString() ?? 'count';
+  final column = params['column']?.toString();
+  final filter = resolveRef(params['filter'], ctx.scope)?.toString();
+  final value = await db.queryAggregate(table,
+      func: func, column: column, filter: filter);
+  return NodeExecResult(
+    dataOutputs: {'value': value, 'count': value?.toInt() ?? 0},
+    nextControlOutput: 'next',
+  );
+}
+
+/// db_insert：插入单行。
+Future<NodeExecResult> _execDbInsert(ExecContext ctx) async {
+  final db = _requireDb(ctx);
+  final params = ctx.node.params;
+  final table = params['table']?.toString() ?? '';
+  if (table.isEmpty) throw StateError('db_insert 未指定 table');
+  final data = _toMap(resolveRef(params['data'], ctx.scope));
+  final result = await db.insert(table, data);
+  return NodeExecResult(
+    dataOutputs: {'insertedId': result.insertedId, 'affected': result.affected},
+    nextControlOutput: 'next',
+  );
+}
+
+/// db_insert_rows：批量插入多行。
+Future<NodeExecResult> _execDbInsertRows(ExecContext ctx) async {
+  final db = _requireDb(ctx);
+  final params = ctx.node.params;
+  final table = params['table']?.toString() ?? '';
+  if (table.isEmpty) throw StateError('db_insert_rows 未指定 table');
+  final rows = _toMapList(resolveRef(params['data'], ctx.scope));
+  final result = await db.insertBatch(table, rows);
+  return NodeExecResult(
+    dataOutputs: {
+      'insertedIds': result.insertedIds,
+      'affected': result.affected,
+    },
+    nextControlOutput: 'next',
+  );
+}
+
+/// db_update：更新。
+Future<NodeExecResult> _execDbUpdate(ExecContext ctx) async {
+  final db = _requireDb(ctx);
+  final params = ctx.node.params;
+  final table = params['table']?.toString() ?? '';
+  if (table.isEmpty) throw StateError('db_update 未指定 table');
+  final filter = resolveRef(params['filter'], ctx.scope)?.toString() ?? '';
+  final data = _toMap(resolveRef(params['data'], ctx.scope));
+  final affected = await db.update(table, filter, data);
+  return NodeExecResult(
+    dataOutputs: {'affected': affected},
+    nextControlOutput: 'next',
+  );
+}
+
+/// db_delete：删除。
+Future<NodeExecResult> _execDbDelete(ExecContext ctx) async {
+  final db = _requireDb(ctx);
+  final params = ctx.node.params;
+  final table = params['table']?.toString() ?? '';
+  if (table.isEmpty) throw StateError('db_delete 未指定 table');
+  final filter = resolveRef(params['filter'], ctx.scope)?.toString() ?? '';
+  final affected = await db.delete(table, filter);
+  return NodeExecResult(
+    dataOutputs: {'affected': affected},
+    nextControlOutput: 'next',
+  );
 }
 
 // ===========================================================================
@@ -502,74 +899,8 @@ Future<NodeExecResult> _execReturn(ExecContext ctx) async {
 }
 
 // ===========================================================================
-// 数据库节点
+// 数据库 DDL 节点
 // ===========================================================================
-
-/// db_query：用 DatabaseExecutor 执行 SELECT，返回 rows + count。
-Future<NodeExecResult> _execDbQuery(ExecContext ctx) async {
-  final db = _requireDb(ctx);
-  final params = ctx.node.params;
-  final table = params['table']?.toString() ?? '';
-  if (table.isEmpty) {
-    throw StateError('db_query 未指定 table');
-  }
-  final filter = resolveRef(params['filter'], ctx.scope)?.toString();
-  final limit = _toInt(resolveRef(params['limit'], ctx.scope));
-  final result = await db.query(table, filter: filter, limit: limit);
-  return NodeExecResult(
-    dataOutputs: {'rows': result.rows, 'count': result.count},
-    nextControlOutput: 'next',
-  );
-}
-
-/// db_insert：执行 INSERT，返回 insertedId + affected。
-Future<NodeExecResult> _execDbInsert(ExecContext ctx) async {
-  final db = _requireDb(ctx);
-  final params = ctx.node.params;
-  final table = params['table']?.toString() ?? '';
-  if (table.isEmpty) {
-    throw StateError('db_insert 未指定 table');
-  }
-  final data = _toMap(resolveRef(params['data'], ctx.scope));
-  final result = await db.insert(table, data);
-  return NodeExecResult(
-    dataOutputs: {'insertedId': result.insertedId, 'affected': result.affected},
-    nextControlOutput: 'next',
-  );
-}
-
-/// db_update：执行 UPDATE，返回 affected。
-Future<NodeExecResult> _execDbUpdate(ExecContext ctx) async {
-  final db = _requireDb(ctx);
-  final params = ctx.node.params;
-  final table = params['table']?.toString() ?? '';
-  if (table.isEmpty) {
-    throw StateError('db_update 未指定 table');
-  }
-  final filter = resolveRef(params['filter'], ctx.scope)?.toString() ?? '';
-  final data = _toMap(resolveRef(params['data'], ctx.scope));
-  final affected = await db.update(table, filter, data);
-  return NodeExecResult(
-    dataOutputs: {'affected': affected},
-    nextControlOutput: 'next',
-  );
-}
-
-/// db_delete：执行 DELETE，返回 affected。
-Future<NodeExecResult> _execDbDelete(ExecContext ctx) async {
-  final db = _requireDb(ctx);
-  final params = ctx.node.params;
-  final table = params['table']?.toString() ?? '';
-  if (table.isEmpty) {
-    throw StateError('db_delete 未指定 table');
-  }
-  final filter = resolveRef(params['filter'], ctx.scope)?.toString() ?? '';
-  final affected = await db.delete(table, filter);
-  return NodeExecResult(
-    dataOutputs: {'affected': affected},
-    nextControlOutput: 'next',
-  );
-}
 
 /// db_create_table：执行建表 DDL。
 Future<NodeExecResult> _execDbCreateTable(ExecContext ctx) async {
@@ -609,6 +940,67 @@ Future<NodeExecResult> _execDbAlterTable(ExecContext ctx) async {
     dataOutputs: {'success': true},
     nextControlOutput: 'next',
   );
+}
+
+// ===========================================================================
+// UI 控制节点
+// ===========================================================================
+
+/// ui_set_text：设置文本组件内容。
+Future<NodeExecResult> _execUiSetText(ExecContext ctx) async {
+  final params = ctx.node.params;
+  final componentId = params['componentId']?.toString() ?? '';
+  final text = resolveRef(params['text'], ctx.scope)?.toString() ?? '';
+  ctx.uiState?.setText(componentId, text);
+  return const NodeExecResult(nextControlOutput: 'next');
+}
+
+/// ui_set_visible：设置组件可见性。
+Future<NodeExecResult> _execUiSetVisible(ExecContext ctx) async {
+  final params = ctx.node.params;
+  final componentId = params['componentId']?.toString() ?? '';
+  final visible = _toBool(resolveRef(params['visible'], ctx.scope));
+  ctx.uiState?.setVisible(componentId, visible);
+  return const NodeExecResult(nextControlOutput: 'next');
+}
+
+/// ui_set_enabled：设置组件启用状态。
+Future<NodeExecResult> _execUiSetEnabled(ExecContext ctx) async {
+  final params = ctx.node.params;
+  final componentId = params['componentId']?.toString() ?? '';
+  final enabled = _toBool(resolveRef(params['enabled'], ctx.scope));
+  ctx.uiState?.setEnabled(componentId, enabled);
+  return const NodeExecResult(nextControlOutput: 'next');
+}
+
+/// ui_set_prop：设置组件任意属性。
+Future<NodeExecResult> _execUiSetProp(ExecContext ctx) async {
+  final params = ctx.node.params;
+  final componentId = params['componentId']?.toString() ?? '';
+  final propName = params['propName']?.toString() ?? '';
+  final value = resolveRef(params['value'], ctx.scope);
+  if (propName.isNotEmpty) {
+    ctx.uiState?.setProp(componentId, propName, value);
+  }
+  return const NodeExecResult(nextControlOutput: 'next');
+}
+
+/// ui_navigate：导航到路由。
+Future<NodeExecResult> _execUiNavigate(ExecContext ctx) async {
+  final params = ctx.node.params;
+  final route = resolveRef(params['route'], ctx.scope)?.toString() ?? '/';
+  final paramsMap = _toMap(resolveRef(params['params'], ctx.scope));
+  ctx.uiState?.navigate(route, paramsMap);
+  return const NodeExecResult(nextControlOutput: 'next');
+}
+
+/// ui_show_toast：显示提示。
+Future<NodeExecResult> _execUiShowToast(ExecContext ctx) async {
+  final params = ctx.node.params;
+  final message = resolveRef(params['message'], ctx.scope)?.toString() ?? '';
+  final type = params['type']?.toString() ?? 'info';
+  ctx.uiState?.showToast(message, type: type);
+  return const NodeExecResult(nextControlOutput: 'next');
 }
 
 // ===========================================================================
@@ -687,6 +1079,87 @@ Map<String, Object?> _toMap(Object? v) {
     }
   }
   return {};
+}
+
+/// 转换为 List（兼容 JSON 字符串解析）。
+List<Object?> _toList(Object? v) {
+  if (v is List) return v;
+  if (v is String && v.trim().isNotEmpty) {
+    try {
+      final decoded = jsonDecode(v);
+      if (decoded is List) return decoded;
+    } catch (_) {
+      // 非 JSON 字符串，降级为空列表。
+    }
+  }
+  return const [];
+}
+
+/// 转换为 List<Map>（批量插入用）。
+List<Map<String, Object?>> _toMapList(Object? v) {
+  final list = _toList(v);
+  return list
+      .map((e) => e is Map ? Map<String, Object?>.from(e) : <String, Object?>{})
+      .toList();
+}
+
+/// 构造成功结果（next 控制流 + 数据输出）。
+NodeExecResult _ok(Map<String, dynamic> data) =>
+    NodeExecResult(dataOutputs: data, nextControlOutput: 'next');
+
+/// 日期格式化（简易：支持 YYYY MM DD HH mm ss 占位）。
+String _formatDate(DateTime dt, String fmt) {
+  return fmt
+      .replaceAll('YYYY', dt.year.toString())
+      .replaceAll('MM', dt.month.toString().padLeft(2, '0'))
+      .replaceAll('DD', dt.day.toString().padLeft(2, '0'))
+      .replaceAll('HH', dt.hour.toString().padLeft(2, '0'))
+      .replaceAll('mm', dt.minute.toString().padLeft(2, '0'))
+      .replaceAll('ss', dt.second.toString().padLeft(2, '0'));
+}
+
+/// 取日期字段值。
+int _dateField(DateTime dt, String field) {
+  switch (field) {
+    case 'year':
+      return dt.year;
+    case 'month':
+      return dt.month;
+    case 'day':
+      return dt.day;
+    case 'hour':
+      return dt.hour;
+    case 'minute':
+      return dt.minute;
+    case 'second':
+      return dt.second;
+    case 'weekday':
+      return dt.weekday;
+    default:
+      return 0;
+  }
+}
+
+/// 日期增量。unit ∈ days/hours/minutes/seconds/months/years。
+DateTime _addDuration(DateTime dt, int amount, String unit) {
+  switch (unit) {
+    case 'days':
+      return dt.add(Duration(days: amount));
+    case 'hours':
+      return dt.add(Duration(hours: amount));
+    case 'minutes':
+      return dt.add(Duration(minutes: amount));
+    case 'seconds':
+      return dt.add(Duration(seconds: amount));
+    case 'months':
+      return DateTime(dt.year, dt.month + amount, dt.day,
+          dt.hour, dt.minute, dt.second);
+    case 'years':
+      return DateTime(dt.year + amount, dt.month, dt.day,
+          dt.hour, dt.minute, dt.second);
+    default:
+      return dt.add(Duration(days: amount));
+  }
 }
 
 /// 解析列定义字符串为 [Column] 列表。

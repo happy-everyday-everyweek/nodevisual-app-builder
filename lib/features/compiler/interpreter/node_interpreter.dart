@@ -7,6 +7,7 @@ import '../../plugins/plugin_registry.dart';
 import 'database_executor.dart';
 import 'node_executors.dart';
 import 'runtime_scope.dart';
+import 'runtime_ui_state.dart';
 
 export 'node_executors.dart' show RunResult, NodeExecResult;
 
@@ -30,6 +31,7 @@ class NodeInterpreter implements InterpreterHost {
     required this.pluginRegistry,
     this.dbExecutor,
     this.pluginConfigStorage,
+    this.uiState,
   });
 
   /// 所属项目（用于 function_call 查找目标函数、db 节点读取 schema）。
@@ -43,6 +45,9 @@ class NodeInterpreter implements InterpreterHost {
 
   /// 插件配置存储（读取 API Key 等），可空。
   final PluginConfigStorage? pluginConfigStorage;
+
+  /// 运行时 UI 状态覆盖层，可空（为空时 ui_* 节点写入被忽略，不抛错）。
+  final RuntimeUiState? uiState;
 
   /// db schema 是否已确保（幂等，避免每次 runFunction 重复建表）。
   bool _schemaEnsured = false;
@@ -127,6 +132,7 @@ class NodeInterpreter implements InterpreterHost {
           pluginRegistry: pluginRegistry,
           pluginConfigStorage: pluginConfigStorage,
           dbExecutor: dbExecutor,
+          uiState: uiState,
         );
         execResult = await executeNode(ctx);
       } catch (e) {
