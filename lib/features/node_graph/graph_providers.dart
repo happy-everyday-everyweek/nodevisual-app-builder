@@ -53,6 +53,12 @@ class GraphMutator extends Notifier<FunctionDef?> {
     ref.read(projectMutatorProvider.notifier).replaceFunction(fn);
   }
 
+  /// 公开提交入口（供签名编辑面板等外部 UI 直接更新函数元数据）。
+  ///
+  /// 调用方传入新的 [FunctionDef]（通常为 `_currentFunction.copyWith(...)`），
+  /// 本方法直接写回项目并持久化，然后 GraphMutator 会通过 watch 自动镜像。
+  void replaceFunction(FunctionDef fn) => _commit(fn);
+
   // ---- 节点 ----
 
   /// 添加节点；返回新节点 id。

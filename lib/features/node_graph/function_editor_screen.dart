@@ -3,8 +3,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/constants.dart';
+import '../../data/models/func_param.dart';
 import '../../data/models/function_def.dart';
 import '../../data/models/node.dart';
+import '../../data/models/port.dart';
 import '../marketplace/marketplace_providers.dart';
 import 'connection_painter.dart';
 import 'dag_validator.dart';
@@ -406,6 +408,11 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
         ),
         title: Text(fn.name, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.edit_note_outlined),
+            tooltip: '函数签名',
+            onPressed: () => _showSignatureSheet(fn),
+          ),
           if (selectedNodeId != null)
             IconButton(
               icon: const Icon(Icons.delete_outline),
@@ -719,6 +726,308 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
           ),
         );
       },
+    );
+  }
+
+  /// 函数签名编辑面板（T26）：CRUD 入参 / 出参。
+  ///
+  /// 展示当前函数的 inputs / outputs 签名，每项可编辑名称、类型、默认值（仅
+  /// inputs）、描述，可增删。修改后通过 [GraphMutator._commit] 写回项目，
+  /// 触发依赖此函数签名的 `function_call` 节点在下次编辑时同步端口。
+  void _showSignatureSheet(FunctionDef fn) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => _SignatureSheet(initial: fn),
+    );
+  }
+}
+
+/// 函数签名编辑面板。
+///
+/// 内部维护 inputs / outputs 的本地副本，确认后一次性提交到项目，避免逐次
+/// 修改触发频繁落盘。提交时：
+/// - 调用 [FunctionDef.copyWith] 替换 inputs / outputs；
+/// - 通过 [GraphMutator._commit] → [ProjectMutator.replaceFunction] 写回项目；
+/// - 关联的 `function_call` 节点 outputs 会在下次进入节点编辑页时按
+///   [NodeKindSpec.projectOutputs] 重新派生（参见 [NodeEditorScreen]）。
+class _SignatureSheet extends ConsumerStatefulWidget {
+  const _SignatureSheet({required this.initial});
+
+  final FunctionDef initial;
+
+  @override
+  ConsumerState<_SignatureSheet> createState() => _SignatureSheetState();
+}
+
+class _SignatureSheetState extends ConsumerState<_SignatureSheet> {
+  late List<FuncParam> _inputs;
+  late List<FuncParam> _outputs;
+
+  @override
+  void initState() {
+    super.initState();
+    _inputs = List<FuncParam>.from(widget.initial.inputs);
+    _outputs = List<FuncParam>.from(widget.initial.outputs);
+  }
+
+  void _commit() {
+    final fn = widget.initial.copyWith(inputs: _inputs, outputs: _outputs);
+    ref.read(graphMutatorProvider.notifier).replaceFunction(fn);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return DraggableScrollableSheet(
+      initialChildSize: 0.7,
+      minChildSize: 0.4,
+      maxChildSize: 0.95,
+      expand: false,
+      builder: (ctx, controller) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+          child: ListView(
+            controller: controller,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.edit_note, color: theme.colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Text('函数签名 — ${widget.initial.name}',
+                      style: theme.textTheme.titleMedium),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '声明函数的入参 / 出参。function_call 节点按此动态生成参数与返回值端口。',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.outline),
+              ),
+              const SizedBox(height: 16),
+              _SectionTitle(text: '入参（${_inputs.length}）'),
+              const SizedBox(height: 6),
+              for (var i = 0; i < _inputs.length; i++)
+                _ParamEditRow(
+                  param: _inputs[i],
+                  isOutput: false,
+                  onChanged: (p) => setState(() => _inputs[i] = p),
+                  onRemove: () => setState(() => _inputs.removeAt(i)),
+                ),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => setState(() {
+                    _inputs.add(FuncParam(
+                      name: 'arg${_inputs.length + 1}',
+                      type: PortType.any,
+                    ));
+                  }),
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('添加入参'),
+                ),
+              ),
+              const SizedBox(height: 16),
+              _SectionTitle(text: '出参（${_outputs.length}）'),
+              const SizedBox(height: 6),
+              if (_outputs.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  child: Text(
+                    '无显式出参：函数沿用 return 节点的 value 单返回语义。',
+                    style: theme.textTheme.bodySmall
+                        ?.copyWith(color: theme.colorScheme.outline),
+                  ),
+                ),
+              for (var i = 0; i < _outputs.length; i++)
+                _ParamEditRow(
+                  param: _outputs[i],
+                  isOutput: true,
+                  onChanged: (p) => setState(() => _outputs[i] = p),
+                  onRemove: () => setState(() => _outputs.removeAt(i)),
+                ),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => setState(() {
+                    _outputs.add(FuncParam(
+                      name: 'out${_outputs.length + 1}',
+                      type: PortType.any,
+                    ));
+                  }),
+                  icon: const Icon(Icons.add, size: 18),
+                  label: const Text('添加出参'),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('取消'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    onPressed: () {
+                      _commit();
+                      Navigator.pop(ctx);
+                    },
+                    child: const Text('保存'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 单个 FuncParam 编辑行（名称 / 类型 / 默认值 / 描述 / 删除）。
+class _ParamEditRow extends StatelessWidget {
+  const _ParamEditRow({
+    required this.param,
+    required this.isOutput,
+    required this.onChanged,
+    required this.onRemove,
+  });
+
+  final FuncParam param;
+  final bool isOutput;
+  final ValueChanged<FuncParam> onChanged;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: TextField(
+                  controller: TextEditingController(text: param.name),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                    hintText: '参数名',
+                  ),
+                  onChanged: (v) => onChanged(param.copyWith(name: v)),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                flex: 2,
+                child: DropdownButtonFormField<PortType>(
+                  value: param.type,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                    hintText: '类型',
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                        value: PortType.any, child: Text('any')),
+                    DropdownMenuItem(
+                        value: PortType.string, child: Text('string')),
+                    DropdownMenuItem(
+                        value: PortType.number, child: Text('number')),
+                    DropdownMenuItem(
+                        value: PortType.boolean, child: Text('boolean')),
+                    DropdownMenuItem(
+                        value: PortType.list, child: Text('list')),
+                    DropdownMenuItem(
+                        value: PortType.map, child: Text('map')),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) onChanged(param.copyWith(type: v));
+                  },
+                ),
+              ),
+              IconButton(
+                tooltip: '删除',
+                icon: Icon(Icons.remove_circle_outline,
+                    size: 20, color: theme.colorScheme.error),
+                onPressed: onRemove,
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          if (!isOutput)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: TextField(
+                controller:
+                    TextEditingController(text: _defaultText(param.defaultValue)),
+                decoration: const InputDecoration(
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                  hintText: '默认值（字面值；可空）',
+                ),
+                onChanged: (v) {
+                  // 简单字符串化默认值；number 解析为 num，bool 为 true/false，否则字符串。
+                  final parsed = _parseDefault(v);
+                  onChanged(param.copyWith(defaultValue: parsed));
+                },
+              ),
+            ),
+          TextField(
+            controller: TextEditingController(text: param.description ?? ''),
+            decoration: const InputDecoration(
+              isDense: true,
+              border: OutlineInputBorder(),
+              hintText: '描述（可选）',
+            ),
+            onChanged: (v) => onChanged(param.copyWith(description: v)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _defaultText(Object? v) {
+    if (v == null) return '';
+    return v.toString();
+  }
+
+  /// 简单解析默认值字面值字符串。
+  ///
+  /// - 空字符串 → null
+  /// - "true"/"false" → bool
+  /// - 数字 → num (int/double)
+  /// - 其他 → 字符串原值
+  static Object? _parseDefault(String v) {
+    if (v.isEmpty) return null;
+    if (v == 'true') return true;
+    if (v == 'false') return false;
+    final num parsed = num.tryParse(v);
+    if (parsed != null) return parsed;
+    return v;
+  }
+}
+
+/// 签名面板小标题。
+class _SectionTitle extends StatelessWidget {
+  const _SectionTitle({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Text(
+      text,
+      style: theme.textTheme.titleSmall?.copyWith(
+        color: theme.colorScheme.primary,
+        fontWeight: FontWeight.w700,
+      ),
     );
   }
 }
