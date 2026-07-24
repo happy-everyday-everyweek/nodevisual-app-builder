@@ -412,6 +412,44 @@ class UiMutator extends Notifier<Project?> {
         },);
       case 'scaffold':
         return UiNode(id: id, type: type, props: const {});
+      case 'rich_text':
+        return UiNode(id: id, type: type, props: const {'content': '富文本内容'});
+      case 'icon':
+        return UiNode(id: id, type: type, props: const {
+          'name': 'star',
+          'size': 24,
+        });
+      case 'badge':
+        return UiNode(id: id, type: type, props: const {'count': '0'});
+      case 'divider':
+        return UiNode(id: id, type: type, props: const {'thickness': 1});
+      case 'spacer':
+        return UiNode(id: id, type: type, props: const {'flex': 1});
+      case 'video':
+        return UiNode(id: id, type: type, props: const {'src': ''});
+      case 'slider':
+        return UiNode(id: id, type: type, props: const {
+          'value': 0.5,
+          'min': 0,
+          'max': 1,
+        });
+      case 'switch':
+        return UiNode(id: id, type: type, props: const {'value': false});
+      case 'checkbox':
+        return UiNode(id: id, type: type, props: const {
+          'value': false,
+          'label': '选项',
+        });
+      case 'progress':
+        return UiNode(id: id, type: type, props: const {'value': 0.5});
+      case 'list_vertical':
+        return UiNode(id: id, type: type, props: const {'items': ''});
+      case 'list_horizontal':
+        return UiNode(id: id, type: type, props: const {'items': ''});
+      case 'tab_container':
+        return UiNode(id: id, type: type, props: const {});
+      case 'card':
+        return UiNode(id: id, type: type, props: const {'elevation': 1});
       default:
         return UiNode(id: id, type: type, props: const {});
     }
