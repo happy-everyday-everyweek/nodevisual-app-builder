@@ -50,14 +50,24 @@ class NodeExecResult {
   /// 是否为 return 节点（终止函数执行并返回值）。
   final bool isReturn;
 
-  /// return 节点的返回值（仅 [isReturn] 为 true 时有效）。
+  /// return 节点的单返回值（向后兼容：旧式 `value` 单返回路径）。
+  ///
+  /// 仅 [isReturn] 为 true 时有效；若 [returnOutputs] 非空则优先使用
+  /// [returnOutputs]（多返回值路径），调用方按目标函数 outputs 名映射。
   final Object? returnValue;
+
+  /// return 节点的多返回值映射（按目标函数 outputs 名）。
+  ///
+  /// 非空时优先于 [returnValue]：调用方应将每个命名值放入 RunResult.outputs。
+  /// 空时退化到旧式单返回 `value`。
+  final Map<String, dynamic> returnOutputs;
 
   const NodeExecResult({
     this.dataOutputs = const {},
     this.nextControlOutput,
     this.isReturn = false,
     this.returnValue,
+    this.returnOutputs = const {},
   });
 }
 
@@ -886,15 +896,43 @@ Future<NodeExecResult> _execFunctionCall(ExecContext ctx) async {
   if (result.error != null) {
     throw StateError('子函数 ${targetFn.name} 执行失败: ${result.error}');
   }
+  // 按目标函数 outputs 名透传多返回值；无 outputs 时退化到旧式单返回。
+  if (targetFn.outputs.isNotEmpty) {
+    return NodeExecResult(
+      dataOutputs: {
+        for (final p in targetFn.outputs)
+          p.name: result.outputs[p.name],
+      },
+      nextControlOutput: 'next',
+    );
+  }
   return NodeExecResult(
     dataOutputs: {'result': result.outputs['value']},
     nextControlOutput: 'next',
   );
 }
 
-/// return：终止，返回 params['value']。
+/// return：终止函数。
+///
+/// 支持两种返回路径：
+/// - **多返回值**：[Node.params] 含 `values` map（key=output 名，
+///   value=`#` 引用），按目标函数 outputs 名映射到 [returnOutputs]。
+///   优先级高于单返回。
+/// - **单返回**（向后兼容）：[Node.params] 含 `value`，放入 [returnValue]，
+///   调用方将其写入 RunResult.outputs['value']。
 Future<NodeExecResult> _execReturn(ExecContext ctx) async {
-  final value = resolveRef(ctx.node.params['value'], ctx.scope);
+  final params = ctx.node.params;
+  // 多返回值路径：params['values'] 为 map<name, ref>。
+  final rawValues = params['values'];
+  if (rawValues is Map && rawValues.isNotEmpty) {
+    final resolved = <String, dynamic>{};
+    for (final entry in rawValues.entries) {
+      resolved[entry.key.toString()] = resolveRef(entry.value, ctx.scope);
+    }
+    return NodeExecResult(isReturn: true, returnOutputs: resolved);
+  }
+  // 单返回路径（向后兼容）。
+  final value = resolveRef(params['value'], ctx.scope);
   return NodeExecResult(isReturn: true, returnValue: value);
 }
 

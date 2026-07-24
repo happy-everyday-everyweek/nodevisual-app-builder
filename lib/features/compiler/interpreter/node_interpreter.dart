@@ -146,8 +146,19 @@ class NodeInterpreter implements InterpreterHost {
         scope.setNodeOutput(currentId, entry.key, entry.value);
       }
 
-      // return 节点：终止并返回值。
+      // return 节点：终止函数并返回值。
+      //
+      // 优先级：returnOutputs（多返回值映射）> returnValue（单返回兼容）。
+      // - 多返回值：把每个命名值放入 RunResult.outputs（key=output 名），
+      //   function_call 节点按目标函数 outputs 名透传给下游。
+      // - 单返回：保留旧式 outputs['value']，向后兼容无签名函数。
       if (execResult.isReturn) {
+        if (execResult.returnOutputs.isNotEmpty) {
+          return RunResult(
+            outputs: Map<String, dynamic>.from(execResult.returnOutputs),
+            didReturn: true,
+          );
+        }
         return RunResult(
           outputs: {'value': execResult.returnValue},
           didReturn: true,
