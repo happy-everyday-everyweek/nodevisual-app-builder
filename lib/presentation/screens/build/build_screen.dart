@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -374,7 +372,7 @@ class _ArtifactTile extends StatelessWidget {
             tooltip: '分享',
             onPressed: () async {
               await Share.shareXFiles(
-                [XFile(artifact.file.path)],
+                [XFile(artifact.path)],
                 text: '${artifact.displayName} - 由 ${AppConstants.appName} 生成',
               );
             },
@@ -396,9 +394,9 @@ class _ArtifactTile extends StatelessWidget {
   }
 
   String _targetPath(BuildArtifact a) {
-    final path = a.file.path;
-    // 缩短显示：只保留最后 2 段
-    final parts = path.split(Platform.pathSeparator);
+    final path = a.path;
+    // 缩短显示：只保留最后 2 段（兼容 Web 与原生，统一用 '/' 分隔）。
+    final parts = path.split('/');
     if (parts.length <= 2) return path;
     return '.../${parts.sublist(parts.length - 2).join('/')}';
   }

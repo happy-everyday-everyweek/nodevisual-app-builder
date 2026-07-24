@@ -130,7 +130,7 @@ class WebBuilder with BuilderUtils implements PlatformBuilder {
 
     return BuildArtifact(
       target: BuildTarget.web,
-      file: zipPath,
+      path: zipPath.path,
       displayName: '${project.meta.name}-web.zip',
       sizeBytes: zipPath.lengthSync(),
       builtAt: DateTime.now().toIso8601String(),

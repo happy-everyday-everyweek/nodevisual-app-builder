@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'build_target.dart';
 
 /// 编译产物。
@@ -12,8 +10,9 @@ class BuildArtifact {
 
   /// 产物文件路径（zip / nvapk / nvexe 等）。
   ///
-  /// 指向打包后的产物文件；如为目录产物，[isDirectory] 为 true。
-  final File file;
+  /// 指向打包后的产物文件路径字符串；如为目录产物，[isDirectory] 为 true。
+  /// 使用 String 而非 dart:io 的 File，以兼容 Web 平台。
+  final String path;
 
   /// 产物友好名称（用于 UI 展示与分享）。
   final String displayName;
@@ -29,7 +28,7 @@ class BuildArtifact {
 
   const BuildArtifact({
     required this.target,
-    required this.file,
+    required this.path,
     required this.displayName,
     required this.sizeBytes,
     required this.builtAt,

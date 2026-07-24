@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'llm/anthropic_plugin.dart';
 import 'llm/openai_plugin.dart';
 import 'plugin_config_storage.dart';
+import 'plugin_config_storage_factory.dart';
 import 'plugin_spec.dart';
 
 /// 已注册的插件条目（规格 + 执行器）。
@@ -71,7 +72,10 @@ final pluginRegistryProvider = Provider<PluginRegistry>((ref) {
   return PluginRegistry.withBuiltins();
 });
 
-/// 插件配置存储 provider（基于 flutter_secure_storage）。
+/// 插件配置存储 provider（平台相关）。
+///
+/// - 非 Web 平台：基于 flutter_secure_storage。
+/// - Web 平台：基于 shared_preferences（localStorage）。
 final pluginConfigStorageProvider = Provider<PluginConfigStorage>((ref) {
-  return PluginConfigStorage();
+  return createPluginConfigStorage();
 });

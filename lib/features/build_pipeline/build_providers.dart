@@ -2,7 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../project/project_providers.dart';
 import 'build_artifact.dart';
-import 'build_pipeline.dart';
+import 'build_pipeline_factory.dart';
 import 'build_progress.dart';
 import 'build_result.dart';
 import 'build_target.dart';
@@ -83,7 +83,7 @@ class BuildStateNotifier extends StateNotifier<BuildState> {
     }
 
     _pipeline?.dispose();
-    _pipeline = BuildPipeline();
+    _pipeline = createBuildPipeline();
 
     // 订阅进度流。
     final sub = _pipeline!.progressStream.listen((p) {

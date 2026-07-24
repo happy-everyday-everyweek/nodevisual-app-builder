@@ -117,7 +117,7 @@ class AndroidBuilder with BuilderUtils implements PlatformBuilder {
 
     return BuildArtifact(
       target: BuildTarget.android,
-      file: nvapkPath,
+      path: nvapkPath.path,
       displayName: '${project.meta.name}-android.nvapk',
       sizeBytes: nvapkPath.lengthSync(),
       builtAt: DateTime.now().toIso8601String(),
