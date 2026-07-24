@@ -340,7 +340,10 @@ class IrValidator {
 
   /// 校验函数 entry 的 ref 引用。
   ///
-  /// - [EntryKind.uiEvent]：ref 指向 UI 节点 id，需在 [Project.ui] 树中存在。
+  /// - [EntryKind.uiEvent]：ref 指向 UI 节点 id（`componentId::eventName`），
+  ///   需在 [Project.ui] 树中存在。
+  /// - [EntryKind.pageEvent]：ref 形如 `<pageId>:<event>`，校验 pageId 在
+  ///   [Project.pages] 中存在、event ∈ [PageEventName.all]。
   /// - [EntryKind.funcCall]：ref 为空（由调用方决定），无需校验。
   /// - [EntryKind.timer] / [EntryKind.external]：v1 不校验配置存在性。
   static void _validateEntry(
@@ -351,6 +354,7 @@ class IrValidator {
   ) {
     switch (entry.kind) {
       case EntryKind.uiEvent:
+        // uiEvent ref 形如 `componentId::eventName`，校验组件存在。
         if (entry.ref == null) {
           issues.add(Issue(
             severity: IssueSeverity.warning,
@@ -359,11 +363,43 @@ class IrValidator {
           ),);
           break;
         }
-        if (!_uiNodeExists(project.ui, entry.ref!)) {
+        // 解析 componentId（`::` 之前）。
+        final refStr = entry.ref!;
+        final sepIdx = refStr.indexOf('::');
+        final componentId =
+            sepIdx > 0 ? refStr.substring(0, sepIdx) : refStr;
+        if (!_uiNodeExists(project.ui, componentId)) {
           issues.add(Issue(
             severity: IssueSeverity.error,
             path: path,
             message: '入口 ref "${entry.ref}" 指向的 UI 节点不存在',
+          ),);
+        }
+        break;
+      case EntryKind.pageEvent:
+        final pageId = entry.pageId;
+        final event = entry.pageEvent;
+        if (pageId == null || event == null) {
+          issues.add(Issue(
+            severity: IssueSeverity.error,
+            path: path,
+            message: '页面事件入口 ref "${entry.ref}" 格式不合法'
+                '（应为 <pageId>:<event>）',
+          ),);
+          break;
+        }
+        bool pageExists = false;
+        for (final p in project.pages) {
+          if (p.id == pageId) {
+            pageExists = true;
+            break;
+          }
+        }
+        if (!pageExists) {
+          issues.add(Issue(
+            severity: IssueSeverity.error,
+            path: path,
+            message: '页面事件入口指向的页面 $pageId 不存在',
           ),);
         }
         break;

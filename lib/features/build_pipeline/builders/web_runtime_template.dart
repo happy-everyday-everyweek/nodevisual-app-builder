@@ -26,6 +26,11 @@ class WebRuntimeTemplate {
   let PROJECT = null;
   const BINDING_REGISTRY = new Map(); // uiNodeId -> { fn: Function, domEl: Element }
 
+  // 页面级函数 outputs 缓存（key = funcId, value = { state, outputs, error }）。
+  // 供同页面 UI 组件的 #funcVar 引用按时间线规则读取。声明在此处以保证
+  // readBindingValue 可引用（const 不会被运行时函数提升）。
+  const PAGE_FUNC_OUTPUTS = new Map();
+
   async function loadIR() {
     // ir.json 与 runtime.js 同目录
     const resp = await fetch("ir.json", { cache: "no-store" });
@@ -427,8 +432,17 @@ class WebRuntimeTemplate {
       const v = (PROJECT.projectVars || []).find(v => v.id === ref.varId);
       return v ? v.defaultValue : undefined;
     }
+    // 页面函数 outputs：按时间线状态返回（done=缓存值，其他=undefined 加载态占位）。
+    if (ref.source === "funcVar" && ref.isPageFunc) {
+      const entry = PAGE_FUNC_OUTPUTS.get(ref.funcId);
+      if (entry && entry.state === "done" && entry.outputs) {
+        return entry.outputs[ref.outputName];
+      }
+      return undefined; // running/idle/error → 加载态占位（undefined）。
+    }
     if (ref.source === "funcVar") return undefined;
     if (ref.source === "upstream") return undefined;
+    if (ref.source === "component") return undefined; // 由容器运行时注入，v1 不支持。
     return undefined;
   }
 
@@ -478,11 +492,61 @@ class WebRuntimeTemplate {
             triggerFunction(fn.id);
           }
         }
+        // 触发所有页面 onLoad 函数（kind=pageEvent, ref=<pageId>:onLoad）。
+        // v1 Web 端按声明序执行所有页面的 onLoad（单页应用按页面切换时
+        // 也应触发，但 v1 简化为初始化时一次性触发首个页面）。
+        const pages = PROJECT.pages || [];
+        const firstPageId = pages.length > 0 ? pages[0].id : null;
+        for (const fn of PROJECT.functions) {
+          if (!fn.entry || fn.entry.kind !== "pageEvent") continue;
+          const ref = fn.entry.ref || "";
+          const idx = ref.indexOf(":");
+          if (idx <= 0) continue;
+          const pageId = ref.substring(0, idx);
+          const event = ref.substring(idx + 1);
+          if (event !== "onLoad") continue;
+          // v1 简化：仅触发首个页面的 onLoad；其他页面的 onLoad 在页面
+          // 切换逻辑中触发（待后续实现 SPA 路由时补完）。
+          if (firstPageId && pageId === firstPageId) {
+            // 异步执行，失败不阻塞其他函数；outputs 缓存到 PAGE_FUNC_OUTPUTS。
+            triggerPageFunction(fn);
+          }
+        }
       }
     } catch (e) {
       console.error("[NodeVisual] Boot failed:", e);
       if (errEl) errEl.textContent = "启动失败: " + e.message;
     }
+  }
+
+  // 页面级函数 outputs 缓存（已在文件顶部声明为 PAGE_FUNC_OUTPUTS）。
+
+  async function triggerPageFunction(fn) {
+    PAGE_FUNC_OUTPUTS.set(fn.id, { state: "running" });
+    try {
+      const result = await runFunction(fn, {});
+      if (result.error) {
+        PAGE_FUNC_OUTPUTS.set(fn.id, { state: "error", error: result.error });
+      } else {
+        PAGE_FUNC_OUTPUTS.set(fn.id, { state: "done", outputs: result.outputs || {} });
+      }
+      // 触发引用了此函数 outputs 的 UI 组件重新读取绑定。
+      refreshBindingsForPageFunc(fn.id);
+    } catch (e) {
+      PAGE_FUNC_OUTPUTS.set(fn.id, { state: "error", error: String(e) });
+    }
+  }
+
+  // 刷新依赖页面函数 outputs 的 UI 绑定（v1 简化：全部刷新）。
+  function refreshBindingsForPageFunc(funcId) {
+    BINDING_REGISTRY.forEach(entries => {
+      for (const e of entries) {
+        if (e.ref && e.ref.source === "funcVar" && e.ref.isPageFunc && e.ref.funcId === funcId) {
+          const v = readBindingValue(e.ref);
+          if (v !== undefined) applyProp(e.el, e.propName, v);
+        }
+      }
+    });
   }
 
   if (document.readyState === "loading") {
