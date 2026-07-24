@@ -108,6 +108,53 @@ class ComponentContextVar {
       'ComponentContextVar($componentLabel.$fieldName: $type)';
 }
 
+/// 页面级函数的一个可引用 output（含时间线）。
+///
+/// 由 UI 渲染层在解析"当前页面绑定的 onLoad 等函数"时产出，供变量选择
+/// 卡片展示与建立 [VariableRef.pageFunc] 引用。仅 UI 侧可见。
+class PageFuncOutputOption {
+  /// 函数 id（[FunctionDef.id]）。
+  final String funcId;
+
+  /// 函数展示名。
+  final String funcName;
+
+  /// output 名（函数 outputs 中某项名）。
+  final String outputName;
+
+  /// output 类型。
+  final PortType type;
+
+  const PageFuncOutputOption({
+    required this.funcId,
+    required this.funcName,
+    required this.outputName,
+    required this.type,
+  });
+
+  /// 建立 [VariableRef.pageFunc] 引用。
+  VariableRef toRef() => VariableRef.pageFunc(
+        funcId: funcId,
+        outputName: outputName,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is PageFuncOutputOption &&
+          funcId == other.funcId &&
+          funcName == other.funcName &&
+          outputName == other.outputName &&
+          type == other.type;
+
+  @override
+  int get hashCode => Object.hash(funcId, funcName, outputName, type);
+
+  @override
+  String toString() =>
+      'PageFuncOutputOption($funcName.$outputName: $type)';
+}
+
 /// `#` 引用作用域**四源**的可用变量集合。
 ///
 /// - [upstream]：控制流上游节点输出（[UpstreamOutput]）。
@@ -127,11 +174,15 @@ class AvailableVars {
   /// 组件上下文变量列表（容器组件向子组件暴露的 item/index/tab/value 等）。
   final List<ComponentContextVar> componentVars;
 
+  /// 页面级函数 outputs 列表（含时间线，仅 UI 侧可见）。
+  final List<PageFuncOutputOption> pageFuncOutputs;
+
   const AvailableVars({
     this.upstream = const [],
     this.funcVars = const [],
     this.projectVars = const [],
     this.componentVars = const [],
+    this.pageFuncOutputs = const [],
   });
 
   /// 四来源是否全为空。
@@ -139,7 +190,8 @@ class AvailableVars {
       upstream.isEmpty &&
       funcVars.isEmpty &&
       projectVars.isEmpty &&
-      componentVars.isEmpty;
+      componentVars.isEmpty &&
+      pageFuncOutputs.isEmpty;
 }
 
 /// `#` 引用作用域解析器（四源模型）。
@@ -213,17 +265,21 @@ class ScopeResolver {
   /// - [project] 为 null 时 [AvailableVars.projectVars] 为空。
   /// - [componentVars]：UI 侧调用时传入当前组件所在容器链暴露的字段；
   ///   函数编辑器内调用时通常为空（函数图无组件树上下文）。
+  /// - [pageFuncOutputs]：UI 侧调用时传入当前页面绑定的 onLoad 等函数 outputs；
+  ///   函数编辑器内调用时通常为空。
   static AvailableVars resolveAllAvailable(
     FunctionDef functionDef,
     Project? project,
     String nodeId, {
     List<ComponentContextVar> componentVars = const [],
+    List<PageFuncOutputOption> pageFuncOutputs = const [],
   }) {
     return AvailableVars(
       upstream: resolveUpstreamOutputs(functionDef, nodeId),
       funcVars: functionDef.funcVars,
       projectVars: project?.projectVars ?? const [],
       componentVars: componentVars,
+      pageFuncOutputs: pageFuncOutputs,
     );
   }
 
@@ -248,6 +304,7 @@ class ScopeResolver {
     String nodeId,
     String name, {
     List<ComponentContextVar> componentVars = const [],
+    List<PageFuncOutputOption> pageFuncOutputs = const [],
   }) {
     final lower = name.toLowerCase();
     final refs = <VariableRef>[];
@@ -286,6 +343,14 @@ class ScopeResolver {
           c.fieldName.substring(0, c.fieldName.indexOf('.')).toLowerCase() ==
               lower) {
         refs.add(c.toRef());
+      }
+    }
+    // 页面级函数 outputs：匹配 outputName / funcName / `funcName.outputName`。
+    for (final p in pageFuncOutputs) {
+      if (p.outputName.toLowerCase() == lower ||
+          p.funcName.toLowerCase() == lower ||
+          '${p.funcName}.${p.outputName}'.toLowerCase() == lower) {
+        refs.add(p.toRef());
       }
     }
     return refs;

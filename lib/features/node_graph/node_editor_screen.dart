@@ -409,7 +409,7 @@ class _RefOrTextFieldState extends State<_RefOrTextField> {
     _picking = false;
     if (!mounted) return;
     if (selected != null) {
-      widget.onSetRef(selected);
+      widget.onSetRef(selected.ref);
     } else if (clearOnCancel) {
       // 取消 `#` 触发：清回字面值。
       _controller.text = '';
