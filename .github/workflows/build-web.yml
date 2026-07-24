@@ -56,7 +56,9 @@ jobs:
           if [ -n "${{ github.event.inputs.tag }}" ]; then
             TAG="${{ github.event.inputs.tag }}"
           else
-            TAG="${GITHUB_REF_NAME:-${GITHUB_SHA::7}}"
+            # 分支名可能含 /（如 fix/xxx），替换为 - 以保证文件名合法
+            RAW="${GITHUB_REF_NAME:-${GITHUB_SHA::7}}"
+            TAG="${RAW//\//-}"
           fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "Using tag: $TAG"
