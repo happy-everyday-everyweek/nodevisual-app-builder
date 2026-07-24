@@ -1139,6 +1139,17 @@ String _refDisplayLabel(VariableRef ref, FunctionDef fn, Project? project) {
       }
       return '#$nodeId.$outputName';
     case VariableSource.funcVar:
+      // 页面级函数 outputs：`#函数展示名.输出名`（找不到回退 `#pageFunc:funcId.outputName`）。
+      if (ref.isPageFunc) {
+        final funcId = ref.funcId!;
+        final outputName = ref.outputName!;
+        if (project != null) {
+          for (final f in project.functions) {
+            if (f.id == funcId) return '#${f.name}.$outputName';
+          }
+        }
+        return '#pageFunc:$funcId.$outputName';
+      }
       final varId = ref.varId;
       if (varId == null) return '#<无效引用>';
       for (final v in fn.funcVars) {

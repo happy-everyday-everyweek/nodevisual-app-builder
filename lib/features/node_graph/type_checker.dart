@@ -47,6 +47,19 @@ PortType? resolveRefType(
       }
       return null;
     case VariableSource.funcVar:
+      // 页面级函数 outputs：按目标函数 outputs 名查类型。
+      if (ref.isPageFunc) {
+        if (project == null) return null;
+        for (final f in project.functions) {
+          if (f.id == ref.funcId) {
+            for (final out in f.outputs) {
+              if (out.name == ref.outputName) return out.type;
+            }
+            return null;
+          }
+        }
+        return null;
+      }
       final varId = ref.varId;
       if (varId == null) return null;
       for (final v in functionDef.funcVars) {

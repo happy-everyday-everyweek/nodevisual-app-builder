@@ -208,6 +208,51 @@ class IrValidator {
         }
         break;
       case VariableSource.funcVar:
+        // 页面级函数 outputs 引用：校验目标函数存在且 outputs 含该名。
+        if (ref.isPageFunc) {
+          final funcId = ref.funcId;
+          final outputName = ref.outputName;
+          if (funcId == null || outputName == null) {
+            issues.add(Issue(
+              severity: IssueSeverity.error,
+              path: path,
+              message: '参数 $paramName 的页面函数 outputs 引用缺少 '
+                  'funcId / outputName',
+            ),);
+            break;
+          }
+          FunctionDef? targetFn;
+          for (final f in project.functions) {
+            if (f.id == funcId) {
+              targetFn = f;
+              break;
+            }
+          }
+          if (targetFn == null) {
+            issues.add(Issue(
+              severity: IssueSeverity.error,
+              path: path,
+              message: '参数 $paramName 引用的页面函数 $funcId 不存在',
+            ),);
+            break;
+          }
+          bool outputExists = false;
+          for (final out in targetFn.outputs) {
+            if (out.name == outputName) {
+              outputExists = true;
+              break;
+            }
+          }
+          if (!outputExists) {
+            issues.add(Issue(
+              severity: IssueSeverity.error,
+              path: path,
+              message: '参数 $paramName 引用的函数 $funcId '
+                  '无 outputs 名 $outputName',
+            ),);
+          }
+          break;
+        }
         final varId = ref.varId;
         if (varId == null) {
           issues.add(Issue(

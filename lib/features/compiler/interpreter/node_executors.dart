@@ -154,6 +154,14 @@ Object? _resolveVariableRef(VariableRef ref, RuntimeScope scope) {
       if (ref.nodeId == null || ref.outputName == null) return null;
       return scope.getNodeOutput(ref.nodeId!, ref.outputName!);
     case VariableSource.funcVar:
+      // 页面级函数 outputs 引用：仅在函数已 done 时返回缓存值，
+      // 其余状态返回 null（节点解释器执行时不应用加载态策略——
+      // 加载态策略是 UI 绑定解析的职责，见 BindingResolver）。
+      if (ref.isPageFunc) {
+        final entry = scope.getPageFuncEntry(ref.funcId!);
+        if (entry == null || entry.state != PageFuncState.done) return null;
+        return entry.outputs[ref.outputName!];
+      }
       if (ref.varId == null) return null;
       return scope.getFuncVar(ref.varId!);
     case VariableSource.projVar:
