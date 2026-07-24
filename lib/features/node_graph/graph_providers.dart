@@ -6,6 +6,7 @@ import '../../data/models/function_def.dart';
 import '../../data/models/node.dart';
 import '../../data/models/port.dart';
 import '../functions/function_providers.dart';
+import '../plugins/plugin_registry.dart';
 import '../project/project_providers.dart';
 import 'dag_validator.dart';
 import 'node_kinds.dart';
@@ -224,14 +225,46 @@ class GraphMutator extends Notifier<FunctionDef?> {
 
   /// 按 kind 生成默认节点（含默认 params、controlOutputs、dataOutputs）。
   ///
-  /// 优先委托 [NodeKindRegistry] / [createNodeForKind]（基础节点）；
-  /// db_* 与 plugin 尚未在注册表中登记，保留本地默认。
+  /// 优先委托 [NodeKindRegistry] / [createNodeForKind]（基础节点 + 内置
+  /// plugin_openai/plugin_anthropic 等）；db_* 与市场安装的 plugin_<id>
+  /// 不在 NodeKindRegistry 中，保留本地默认（市场插件走 PluginRegistry）。
   /// position 由调用方覆盖；id 已生成。
-  static Node _createDefaultNode(String kind) {
+  Node _createDefaultNode(String kind) {
     if (NodeKindRegistry.isRegistered(kind)) {
       return createNodeForKind(kind);
     }
     final id = _uuid.v4();
+    // 市场插件节点（kind = plugin_<id>）：从 PluginRegistry 获取规格创建。
+    if (kind.startsWith('plugin_')) {
+      final pluginId = kind.substring(7);
+      final registry = ref.read(pluginRegistryProvider);
+      final entry = registry.get(pluginId);
+      if (entry != null) {
+        final spec = entry.spec;
+        return Node(
+          id: id,
+          kind: kind,
+          params: {
+            'pluginId': pluginId,
+            'name': spec.displayName,
+          },
+          position: const NodePosition(x: 0, y: 0),
+          controlOutputs: const [ControlOutput(name: 'next')],
+          dataOutputs: spec.outputs
+              .map((o) => DataOutput(name: o.name, type: o.type))
+              .toList(),
+        );
+      }
+      // 插件未注册，降级为通用 plugin 节点。
+      return Node(
+        id: id,
+        kind: kind,
+        params: {'pluginId': pluginId, 'name': kind},
+        position: const NodePosition(x: 0, y: 0),
+        controlOutputs: const [ControlOutput(name: 'next')],
+        dataOutputs: const [DataOutput(name: 'result', type: PortType.any)],
+      );
+    }
     switch (kind) {
       case 'db_query':
         return Node(
@@ -257,15 +290,6 @@ class GraphMutator extends Notifier<FunctionDef?> {
           dataOutputs: const [
             DataOutput(name: 'affected', type: PortType.number),
           ],
-        );
-      case 'plugin':
-        return Node(
-          id: id,
-          kind: kind,
-          params: const {'pluginId': '', 'config': {}},
-          position: const NodePosition(x: 0, y: 0),
-          controlOutputs: const [ControlOutput(name: 'next')],
-          dataOutputs: const [DataOutput(name: 'result', type: PortType.any)],
         );
       default:
         return Node(

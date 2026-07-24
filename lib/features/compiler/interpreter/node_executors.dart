@@ -187,6 +187,12 @@ Future<NodeExecResult> executeNode(ExecContext ctx) async {
     case 'plugin_anthropic':
       return _execPlugin(ctx, 'llm_anthropic');
     default:
+      // 市场插件节点（kind = plugin_<id>）：提取 pluginId 并执行。
+      if (ctx.node.kind.startsWith('plugin_')) {
+        final pluginId = ctx.node.params['pluginId']?.toString() ??
+            ctx.node.kind.substring(7);
+        return _execPlugin(ctx, pluginId);
+      }
       // 未知 kind：按约定走 next 控制流输出（不产出数据）。
       return const NodeExecResult(nextControlOutput: 'next');
   }

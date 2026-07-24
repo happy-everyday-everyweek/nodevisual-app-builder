@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../core/constants.dart';
 import '../../data/models/function_def.dart';
 import '../../data/models/node.dart';
+import '../marketplace/marketplace_providers.dart';
 import 'connection_painter.dart';
 import 'dag_validator.dart';
 import 'graph_providers.dart';
@@ -575,21 +576,36 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
   }
 
   Widget _buildPaletteGrid(ThemeData theme) {
-    const kinds = <_NodeKindEntry>[
-      _NodeKindEntry(kind: 'variable_set', label: 'Set Var', icon: Icons.label_outline),
-      _NodeKindEntry(kind: 'variable_get', label: 'Get Var', icon: Icons.label_outline),
-      _NodeKindEntry(kind: 'arithmetic', label: 'Arithmetic', icon: Icons.calculate_outlined),
-      _NodeKindEntry(kind: 'logic', label: 'Logic', icon: Icons.account_tree_outlined),
-      _NodeKindEntry(kind: 'string_op', label: 'String', icon: Icons.text_fields),
-      _NodeKindEntry(kind: 'if', label: 'If', icon: Icons.call_split),
-      _NodeKindEntry(kind: 'loop', label: 'Loop', icon: Icons.loop),
-      _NodeKindEntry(kind: 'db_query', label: 'DB Query', icon: Icons.storage_outlined),
-      _NodeKindEntry(kind: 'db_insert', label: 'DB Insert', icon: Icons.storage_outlined),
-      _NodeKindEntry(kind: 'db_update', label: 'DB Update', icon: Icons.storage_outlined),
-      _NodeKindEntry(kind: 'db_delete', label: 'DB Delete', icon: Icons.storage_outlined),
-      _NodeKindEntry(kind: 'function_call', label: 'Call Func', icon: Icons.functions),
-      _NodeKindEntry(kind: 'plugin', label: 'Plugin', icon: Icons.extension),
+    // 基础节点种类
+    final baseKinds = <_NodeKindEntry>[
+      const _NodeKindEntry(kind: 'variable_set', label: 'Set Var', icon: Icons.label_outline),
+      const _NodeKindEntry(kind: 'variable_get', label: 'Get Var', icon: Icons.label_outline),
+      const _NodeKindEntry(kind: 'arithmetic', label: 'Arithmetic', icon: Icons.calculate_outlined),
+      const _NodeKindEntry(kind: 'logic', label: 'Logic', icon: Icons.account_tree_outlined),
+      const _NodeKindEntry(kind: 'string_op', label: 'String', icon: Icons.text_fields),
+      const _NodeKindEntry(kind: 'if', label: 'If', icon: Icons.call_split),
+      const _NodeKindEntry(kind: 'loop', label: 'Loop', icon: Icons.loop),
+      const _NodeKindEntry(kind: 'db_query', label: 'DB Query', icon: Icons.storage_outlined),
+      const _NodeKindEntry(kind: 'db_insert', label: 'DB Insert', icon: Icons.storage_outlined),
+      const _NodeKindEntry(kind: 'db_update', label: 'DB Update', icon: Icons.storage_outlined),
+      const _NodeKindEntry(kind: 'db_delete', label: 'DB Delete', icon: Icons.storage_outlined),
+      const _NodeKindEntry(kind: 'function_call', label: 'Call Func', icon: Icons.functions),
+      const _NodeKindEntry(kind: 'plugin_openai', label: 'OpenAI', icon: Icons.psychology_outlined),
+      const _NodeKindEntry(kind: 'plugin_anthropic', label: 'Anthropic', icon: Icons.psychology_outlined),
     ];
+
+    // 已安装的市场插件（动态追加）
+    final installedSpecs = ref.watch(installedPluginSpecsProvider);
+    final pluginKinds = installedSpecs
+        .map((s) => _NodeKindEntry(
+              kind: 'plugin_${s.id}',
+              label: s.displayName,
+              icon: Icons.extension,
+            ))
+        .toList();
+
+    final kinds = [...baseKinds, ...pluginKinds];
+
     return SizedBox(
       height: 84,
       child: ListView.separated(
@@ -600,7 +616,9 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
           final entry = kinds[i];
           return _PaletteButton(
             entry: entry,
-            color: theme.colorScheme.primary,
+            color: entry.kind.startsWith('plugin_')
+                ? theme.colorScheme.tertiary
+                : theme.colorScheme.primary,
             onTap: () => _addNodeOfKind(entry.kind),
           );
         },

@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../core/constants.dart';
 import '../../data/repositories/project_repository.dart';
+import '../../features/marketplace/marketplace_providers.dart';
 import '../../features/project/project_providers.dart';
 
 /// 主页（项目列表）屏幕。
@@ -59,8 +60,29 @@ class HomeScreen extends ConsumerWidget {
     context.push(AppConstants.projectRoute(project.meta.id));
   }
 
+  /// 显示关于对话框。
+  void _showAbout(BuildContext context) {
+    showAboutDialog(
+      context: context,
+      applicationName: AppConstants.appName,
+      applicationVersion: '${AppConstants.appVersion} '
+          '(build ${AppConstants.buildNumber})',
+      applicationLegalese: 'MIT License',
+      applicationIcon: const FlutterLogo(),
+      children: const [
+        SizedBox(height: 8),
+        Text('端侧可视化节点编程工具'),
+        SizedBox(height: 4),
+        Text('通过插件市场扩展功能，支持 Android / Web / Windows 多端编译。',
+            style: TextStyle(fontSize: 12)),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // 触发已安装插件加载并注册到 PluginRegistry（启动时）。
+    ref.watch(installedPluginsProvider);
     final asyncList = ref.watch(projectListProvider);
     final theme = Theme.of(context);
 
@@ -69,9 +91,14 @@ class HomeScreen extends ConsumerWidget {
         title: const Text(AppConstants.appName),
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            tooltip: '设置',
-            onPressed: () {},
+            icon: const Icon(Icons.storefront_outlined),
+            tooltip: '插件市场',
+            onPressed: () => context.push(AppConstants.routeMarketplace),
+          ),
+          IconButton(
+            icon: const Icon(Icons.info_outline),
+            tooltip: '关于',
+            onPressed: () => _showAbout(context),
           ),
         ],
       ),
