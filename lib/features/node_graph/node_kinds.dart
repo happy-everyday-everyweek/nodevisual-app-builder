@@ -1253,7 +1253,7 @@ class NodeKindRegistry {
           ),
         ],
         defaultControlOutputs: ['next'],
-        defaultDataOutputs: [(name: 'ok', type: PortType.bool)],
+        defaultDataOutputs: [(name: 'ok', type: PortType.boolean)],
       ),
       NodeKindSpec(
         kind: 'plugin_share',
@@ -1277,7 +1277,7 @@ class NodeKindRegistry {
           ),
         ],
         defaultControlOutputs: ['next'],
-        defaultDataOutputs: [(name: 'ok', type: PortType.bool)],
+        defaultDataOutputs: [(name: 'ok', type: PortType.boolean)],
       ),
 
       // ---- 代码运行节点（用户自定义代码）----
