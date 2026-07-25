@@ -205,7 +205,7 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
     }
   }
 
-  void _onNodeDragUpdate(String nodeId, DragUpdateDetails details) {
+  void _onNodeDragUpdate(String nodeId, Offset delta) {
     final fn = ref.read(graphMutatorProvider);
     if (fn == null) return;
     Node? node;
@@ -220,8 +220,8 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
     // details.delta 是视口坐标增量，需除以当前缩放转为画布增量。
     final scale = _transformController.value.getMaxScaleOnAxis();
     if (scale == 0) return;
-    final dx = details.delta.dx / scale;
-    final dy = details.delta.dy / scale;
+    final dx = delta.dx / scale;
+    final dy = delta.dy / scale;
     final newPos = NodePosition(
       x: node.position.x + dx,
       y: node.position.y + dy,
@@ -388,7 +388,7 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
     // 单输出节点（含 branch 子节点）：直接选中其唯一输出端口。
     setState(() {
       _connectSourceNode = nodeId;
-      _connectSourcePort = node.controlOutputs.first.name;
+      _connectSourcePort = node!.controlOutputs.first.name;
     });
   }
 

@@ -182,7 +182,7 @@ class _NodeCardState extends State<NodeCard>
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(
                   color: borderColor,
-                  width: borderWidth,
+                  width: borderWidth.toDouble(),
                 ),
                 boxShadow: [
                   BoxShadow(

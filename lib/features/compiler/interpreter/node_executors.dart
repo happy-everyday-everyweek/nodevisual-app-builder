@@ -421,8 +421,8 @@ Future<NodeExecResult> _execCodeRun(ExecContext ctx) async {
     // 注入 inputs 全局变量。
     runtime.evaluate('var inputs = ${jsonEncode(inputsMap)};');
     final result = runtime.evaluate(code);
-    // flutter_js 的 evaluate 返回 JsEvalResult；未定义返回为 undefined。
-    final raw = result.isUndefined ? null : result.rawResult;
+    // flutter_js 的 evaluate 返回 JsEvalResult；rawResult 将 JS undefined 映射为 null。
+    final raw = result.rawResult;
     return NodeExecResult(
       nextControlOutput: 'next',
       dataOutputs: {'result': raw},
@@ -646,6 +646,7 @@ Future<NodeExecResult> _execDateOp(ExecContext ctx) async {
   final params = ctx.node.params;
   final op = params['operation']?.toString() ?? 'now';
   final aStr = resolveRef(params['a'], ctx.scope)?.toString();
+  final b = resolveRef(params['b'], ctx.scope);
   switch (op) {
     case 'now':
       return _ok({'result': DateTime.now().toIso8601String()});

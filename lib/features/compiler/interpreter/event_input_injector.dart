@@ -1,4 +1,4 @@
-import '../../data/models/function_def.dart';
+import '../../../data/models/function_def.dart';
 
 /// UI 事件触发函数的入参注入器（T24）。
 ///
