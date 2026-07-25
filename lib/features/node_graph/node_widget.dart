@@ -11,8 +11,9 @@ enum NodeEditorMode {
 
   /// 连线：点击起始节点 → 点击终止节点建立控制流连线。
   ///
-  /// 连线仅代表执行顺序，与参数传递无关。多输出节点（如 if/loop）点击时
-  /// 若有多个控制流输出端口，弹出菜单让用户选择从哪个端口出发。
+  /// 连线仅代表执行顺序，与参数传递无关。多输出母节点（if / loop 等）的
+  /// 输出端口已在 [GraphMutator.addWithBranches] 时自动连到对应的 `branch`
+  /// 子节点，因此连线起点应点击子节点，母节点本身不能作为起点。
   connect,
 
   /// 添加：打开节点面板。
@@ -70,8 +71,8 @@ class NodeCard extends StatefulWidget {
 
   /// 连线模式：点击该节点（参数：节点 id）。
   ///
-  /// 由父组件决定是"作为起始节点选中"还是"作为终止节点建立连线"，
-  /// 多输出节点的端口选择也由父组件弹出菜单处理。
+  /// 由父组件决定是"作为起始节点选中"还是"作为终止节点建立连线"。
+  /// 多输出母节点（if / loop 等）由父组件拦截并提示用户改点对应的子节点。
   final ValueChanged<String>? onConnectTap;
 
   /// 连线模式下是否为当前选中的起始节点（高亮）。
@@ -163,7 +164,8 @@ class _NodeCardState extends State<NodeCard>
 
   Widget _buildBody(ThemeData theme, ColorScheme cs, bool isConnect) {
     // 连线模式：单击作为起始或终止节点（两步点击式连线）。
-    // 多输出节点的端口选择由父组件 onConnectTap 弹出菜单处理。
+    // 多输出母节点（if / loop 等）由父组件 onConnectTap 拦截并提示用户
+    // 改点对应的 branch 子节点作为起点。
     if (isConnect) {
       return GestureDetector(
         behavior: HitTestBehavior.opaque,

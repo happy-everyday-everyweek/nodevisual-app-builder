@@ -24,8 +24,10 @@ import 'node_widget.dart';
 /// - 内部 Stack 为虚拟画布坐标系，节点用 [Positioned] 摆放；
 /// - [CustomPaint] + [ConnectionPainter] 绘制控制流连线；
 /// - 指针模式：单击打开节点编辑页 / 长按选中 / 拖拽移动节点；
-/// - 连线模式：两步点击式（先点击起始节点，再点击终止节点建立连线），
-///   多输出节点弹出端口选择菜单。长按连线删除。
+/// - 连线模式：两步点击式（先点击起始节点，再点击终止节点建立连线）。
+///   多输出母节点（if / loop 等）遵循子母节点设计——每个输出端口已自动
+///   连到一个 `branch` 子节点，连线起点必须点击子节点，母节点本身不能
+///   作为起点。长按连线删除。
 ///
 /// **核心语义**：连线仅代表执行顺序，与参数传递无关。参数通过节点
 /// [Node.params] 中的 `#` 引用（[VariableRef]）独立完成，与控制流边解耦。
@@ -54,7 +56,8 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
   // 连线模式下的"已选中起始节点 + 端口"状态（仅本地 UI）。
   //
   // 连线交互采用两步点击式：
-  // 1. 第一次点击节点 → 设为起始（多输出节点弹出端口选择菜单）；
+  // 1. 第一次点击节点 → 设为起始。多输出母节点（if / loop 等）不能作为
+  //    起点（其输出端口已自动连到 branch 子节点），需点击对应的子节点；
   // 2. 第二次点击另一节点 → 建立控制流连线（仅代表执行顺序）。
   // 点击空白或同一节点 → 取消起始选择。
   String? _connectSourceNode;
@@ -232,13 +235,16 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
   /// 连线模式：节点点击回调（两步点击式连线）。
   ///
   /// 流程：
-  /// 1. 无起始节点时：本次点击的节点作为起始。若该节点有多个控制流输出端口，
-  ///    弹出端口选择菜单；否则直接用第一个（唯一）端口。
+  /// 1. 无起始节点时：本次点击的节点作为起始。
+  ///    - **子母节点设计**：controlOutputs >= 2 的母节点（if / loop 等）不允许
+  ///      直接作为连线起点——母节点的每个输出端口已在 [GraphMutator.addWithBranches]
+  ///      时自动连到一个 `branch` 子节点（"一个输出端口 = 一个子节点"）。
+  ///      用户必须点击对应的 `branch` 子节点作为起点。
+  ///    - 单输出节点（含 `branch` 子节点）：直接选中其唯一输出端口。
   /// 2. 已有起始节点时：本次点击的节点作为终止，建立控制流连线。
   ///    - 同一节点再次点击 → 取消起始选择（避免自环）；
   ///    - 不同节点 → 调用 [GraphMutator.addEdge] 建立连线；
-  ///    - 成功后保留起始节点与端口，便于连续建立多条连线（v1 改为清除，
-  ///      避免视觉混乱）。
+  ///    - 成功后清除起始选择（每次只建一根连线，避免视觉混乱）。
   ///
   /// 连线仅代表执行顺序，与参数传递无关。
   void _onNodeConnectTap(String nodeId) {
@@ -310,62 +316,23 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
       );
       return;
     }
-    if (node.controlOutputs.length == 1) {
-      // 单输出节点：直接选中。
-      setState(() {
-        _connectSourceNode = nodeId;
-        _connectSourcePort = node.controlOutputs.first.name;
-      });
+    if (node.controlOutputs.length >= 2) {
+      // 子母节点设计：多输出母节点的每个端口已自动连到对应的 branch 子节点，
+      // 不能直接作为连线起点（否则会破坏母→子边，且违背"一个端口=一个子节点"
+      // 的核心设计）。引导用户点击子节点。
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('多输出节点已自动生成子节点，请点击对应的"分支出口"子节点作为连线起点'),
+          duration: Duration(seconds: 3),
+        ),
+      );
       return;
     }
-    // 多输出节点：弹出端口选择菜单。
-    _showPortSelectionMenu(node);
-  }
-
-  /// 多输出节点的控制流输出端口选择菜单（连线模式起始端口选择）。
-  void _showPortSelectionMenu(Node node) {
-    final ports = node.controlOutputs
-        .map((p) => p.name)
-        .toList(growable: false);
-    showModalBottomSheet<void>(
-      context: context,
-      builder: (ctx) {
-        final theme = Theme.of(ctx);
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(8, 8, 8, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 8,),
-                  child: Text(
-                    '选择起始端口 — ${node.params['name']?.toString() ?? node.kind}',
-                    style: theme.textTheme.titleSmall,
-                  ),
-                ),
-                const Divider(height: 1),
-                for (final port in ports)
-                  ListTile(
-                    leading: Icon(Icons.arrow_outward,
-                        size: 20, color: theme.colorScheme.tertiary,),
-                    title: Text(port),
-                    onTap: () {
-                      Navigator.pop(ctx);
-                      setState(() {
-                        _connectSourceNode = node.id;
-                        _connectSourcePort = port;
-                      });
-                    },
-                  ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
+    // 单输出节点（含 branch 子节点）：直接选中其唯一输出端口。
+    setState(() {
+      _connectSourceNode = nodeId;
+      _connectSourcePort = node.controlOutputs.first.name;
+    });
   }
 
   // ---- 连线选中 / 删除 ----
