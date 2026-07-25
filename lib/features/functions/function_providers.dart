@@ -3,7 +3,9 @@ import 'package:uuid/uuid.dart';
 
 import '../../data/models/folder.dart';
 import '../../data/models/function_def.dart';
+import '../../data/models/node.dart';
 import '../../data/models/project.dart';
+import '../node_graph/node_kinds.dart';
 import '../project/project_providers.dart';
 
 const Uuid _uuid = Uuid();
@@ -128,13 +130,30 @@ class ProjectMutator extends Notifier<Project?> {
   // ---- 函数 CRUD ----
 
   /// 创建函数；返回新函数 id。folderId 为 null 表示放在根目录。
+  ///
+  /// 自动生成 1 个入参节点（function_input）+ 1 个出参节点（function_output），
+  /// 不预联线（用户手动连接入参 → ... → 出参形成完整控制流）。
   String createFunction(String name, {String? folderId}) {
     final p = _project;
     if (p == null) {
       throw StateError('未打开任何项目，无法创建函数');
     }
     final id = _uuid.v4();
-    final fn = FunctionDef(id: id, name: name, folderId: folderId);
+    // 入参节点放在画布左侧，出参节点放在画布右侧，留出中间空间给业务节点。
+    final inputNode = createNodeForKind('function_input').copyWith(
+      position: const NodePosition(x: -300, y: 0),
+      params: const {'name': '入参'},
+    );
+    final outputNode = createNodeForKind('function_output').copyWith(
+      position: const NodePosition(x: 300, y: 0),
+      params: const {'name': '出参'},
+    );
+    final fn = FunctionDef(
+      id: id,
+      name: name,
+      folderId: folderId,
+      nodes: [inputNode, outputNode],
+    );
     _commit(p.copyWith(functions: [...p.functions, fn]));
     return id;
   }

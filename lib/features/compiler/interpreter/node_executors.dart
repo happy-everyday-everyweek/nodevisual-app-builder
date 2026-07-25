@@ -221,13 +221,18 @@ Future<NodeExecResult> executeNode(ExecContext ctx) async {
     // ---- 流程控制 ----
     case 'if':
       return _execIf(ctx);
-    case 'if_branch':
-      // 子母节点设计的子节点：纯控制流传递，走 next 输出（无数据产出）。
+    case 'branch':
+      // 通用子母节点设计的子节点：纯控制流传递，走 next 输出（无数据产出）。
+      // 服务于 if / loop 等所有多输出母节点，每个子节点对应母节点的一个控制流输出端口。
       return const NodeExecResult(nextControlOutput: 'next');
     case 'loop':
       return _execLoop(ctx);
-    case 'return':
-      return _execReturn(ctx);
+
+    // ---- 函数入参 / 出参 ----
+    case 'function_input':
+      return _execFunctionInput(ctx);
+    case 'function_output':
+      return _execFunctionOutput(ctx);
 
     // ---- 函数调用 ----
     case 'function_call':
@@ -1044,17 +1049,41 @@ Future<NodeExecResult> _execFunctionCall(ExecContext ctx) async {
   );
 }
 
-/// return：终止函数。
+/// function_input：函数唯一入口节点。
 ///
-/// 支持两种返回路径：
-/// - **多返回值**：[Node.params] 含 `values` map（key=output 名，
-///   value=`#` 引用），按目标函数 outputs 名映射到 [returnOutputs]。
-///   优先级高于单返回。
-/// - **单返回**（向后兼容）：[Node.params] 含 `value`，放入 [returnValue]，
-///   调用方将其写入 RunResult.outputs['value']。
-Future<NodeExecResult> _execReturn(ExecContext ctx) async {
+/// 把运行时入参（[RuntimeScope.inputs] + 函数变量默认值）按 [FunctionDef.inputs]
+/// 名映射为节点数据输出，供下游 `#upstream(function_input_node, input_name)`
+/// 引用。控制流走 `next`。
+///
+/// 入参节点的 dataOutputs 在签名同步时已直接写入 [Node.dataOutputs]
+/// （见 [GraphMutator.syncFunctionSignature]），此处按 dataOutputs 名
+/// 从 scope 取值并输出。
+Future<NodeExecResult> _execFunctionInput(ExecContext ctx) async {
+  final outs = <String, dynamic>{};
+  for (final o in ctx.node.dataOutputs) {
+    // 优先用 scope.inputs（function_call 透传的入参），缺失时取函数变量。
+    final fromInputs = ctx.scope.inputs[o.name];
+    if (fromInputs != null) {
+      outs[o.name] = fromInputs;
+      continue;
+    }
+    // 兜底：按名查找函数变量（funcVars 中匹配 name 的变量）。
+    for (final v in ctx.function.funcVars) {
+      if (v.name == o.name) {
+        outs[o.name] = ctx.scope.getFuncVar(v.id);
+        break;
+      }
+    }
+  }
+  return NodeExecResult(dataOutputs: outs, nextControlOutput: 'next');
+}
+
+/// function_output：函数唯一出口节点。
+///
+/// 收集 params['values']（map<outputName, ref>）的运行时值作为函数返回值，
+/// 终止控制流（无 next 输出）。等价于旧 return 节点的多返回值路径。
+Future<NodeExecResult> _execFunctionOutput(ExecContext ctx) async {
   final params = ctx.node.params;
-  // 多返回值路径：params['values'] 为 map<name, ref>。
   final rawValues = params['values'];
   if (rawValues is Map && rawValues.isNotEmpty) {
     final resolved = <String, dynamic>{};
@@ -1063,9 +1092,8 @@ Future<NodeExecResult> _execReturn(ExecContext ctx) async {
     }
     return NodeExecResult(isReturn: true, returnOutputs: resolved);
   }
-  // 单返回路径（向后兼容）。
-  final value = resolveRef(params['value'], ctx.scope);
-  return NodeExecResult(isReturn: true, returnValue: value);
+  // 无 values 映射：返回空 outputs 终止函数。
+  return const NodeExecResult(isReturn: true);
 }
 
 // ===========================================================================

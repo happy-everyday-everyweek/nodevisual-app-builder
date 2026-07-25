@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/constants.dart';
+import '../../data/models/func_param.dart';
 import '../../data/models/function_def.dart';
 import '../../data/models/node.dart';
 import '../../data/models/port.dart';
@@ -151,17 +152,45 @@ class _NodeEditorBody extends ConsumerWidget {
               _PluginConfigCard(pluginId: spec!.pluginId!),
               const SizedBox(height: 20),
             ],
-            _SectionTitle(title: '参数'),
-            const SizedBox(height: 4),
-            ...[
-              for (final p in spec!.paramSchema)
-                _buildParamField(context, ref, p),
+            // 入参/出参节点：取代侧边栏签名编辑，直接在节点编辑页编辑函数签名。
+            if (spec!.kind == 'function_input') ...[
+              _SectionTitle(title: '入参签名'),
+              const SizedBox(height: 4),
+              _SignatureEditor(
+                nodeId: nodeId,
+                params: functionDef.inputs,
+                isInputs: true,
+              ),
+              const SizedBox(height: 20),
+            ] else if (spec!.kind == 'function_output') ...[
+              _SectionTitle(title: '出参签名'),
+              const SizedBox(height: 4),
+              _SignatureEditor(
+                nodeId: nodeId,
+                params: functionDef.outputs,
+                isInputs: false,
+              ),
+              const SizedBox(height: 20),
+              _SectionTitle(title: '返回值映射'),
+              const SizedBox(height: 4),
+              ...[
+                for (final p in spec!.paramSchema)
+                  _buildParamField(context, ref, p),
+              ],
+              const SizedBox(height: 20),
+            ] else ...[
+              _SectionTitle(title: '参数'),
+              const SizedBox(height: 4),
+              ...[
+                for (final p in spec!.paramSchema)
+                  _buildParamField(context, ref, p),
+              ],
+              // function_call 动态入参：按目标函数 inputs 签名生成参数字段。
+              if (spec!.kind == 'function_call') ...[
+                ..._buildFunctionCallInputFields(context, ref),
+              ],
+              const SizedBox(height: 20),
             ],
-            // function_call 动态入参：按目标函数 inputs 签名生成参数字段。
-            if (spec!.kind == 'function_call') ...[
-              ..._buildFunctionCallInputFields(context, ref),
-            ],
-            const SizedBox(height: 20),
           ],
           _SectionTitle(title: '控制流输出'),
           const SizedBox(height: 4),
@@ -239,8 +268,8 @@ class _NodeEditorBody extends ConsumerWidget {
           project: project,
           functionId: functionId,
           nodeId: nodeId,
-          // return 节点的 values 字段：键建议来自函数 outputs 名。
-          suggestedKeys: spec?.kind == 'return'
+          // function_output 节点的 values 字段：键建议来自函数 outputs 名。
+          suggestedKeys: spec?.kind == 'function_output'
               ? functionDef.outputs.map((o) => o.name).toList(growable: false)
               : const [],
           onChanged: (m) => _commitParam(ref, p.name, m),
@@ -309,7 +338,8 @@ class _NodeEditorBody extends ConsumerWidget {
   /// 重新派生输出。
   ///
   /// 单次 [GraphMutator.updateNode] 提交，避免多次落盘的中间态。
-  /// 对于 if 节点，cases / includeDefault 变更后同步增删 if_branch 子节点。
+  /// 多输出母节点（如 if 的 cases / includeDefault）参数变更后同步增删
+  /// branch 子节点（通用子母节点设计）。
   void _commitParam(WidgetRef ref, String name, Object? value) {
     final spec = this.spec;
     if (spec == null) return;
@@ -334,9 +364,10 @@ class _NodeEditorBody extends ConsumerWidget {
           controlOutputs: ctrl,
           dataOutputs: data,
         );
-    // if 节点的 cases / includeDefault 变更 → 同步子母分支子节点。
-    if (spec.kind == 'if' && (name == 'cases' || name == 'includeDefault')) {
-      ref.read(graphMutatorProvider.notifier).syncIfBranches(nodeId);
+    // 多输出母节点的参数变更可能影响控制流输出端口 → 同步 branch 子节点。
+    // 仅对 dynamicOutputs 节点（如 if）有效；静态输出节点（如 loop）幂等无操作。
+    if (spec.dynamicOutputs != null) {
+      ref.read(graphMutatorProvider.notifier).syncBranches(nodeId);
     }
   }
 }
@@ -1547,4 +1578,221 @@ List<String> _stringListFrom(Object? v) {
     return v.map((e) => e.toString()).toList(growable: true);
   }
   return const ['true', 'false'];
+}
+
+/// 函数签名编辑器（入参/出参节点专用，取代侧边栏签名编辑）。
+///
+/// 渲染 [FuncParam] 列表，每行可编辑名称 / 类型 / 默认值（仅入参） / 描述 / 删除，
+/// 底部"添加"按钮追加新参数。每次变更通过 [GraphMutator.syncFunctionSignature]
+/// 同步到 [FunctionDef.inputs]/[outputs]，并刷新 function_input 节点的 dataOutputs。
+class _SignatureEditor extends ConsumerStatefulWidget {
+  const _SignatureEditor({
+    required this.nodeId,
+    required this.params,
+    required this.isInputs,
+  });
+
+  /// IO 节点 id（用于 syncFunctionSignature 定位节点）。
+  final String nodeId;
+
+  /// 初始签名（来自 FunctionDef.inputs 或 outputs）。
+  final List<FuncParam> params;
+
+  /// true = 入参签名，false = 出参签名。
+  final bool isInputs;
+
+  @override
+  ConsumerState<_SignatureEditor> createState() => _SignatureEditorState();
+}
+
+class _SignatureEditorState extends ConsumerState<_SignatureEditor> {
+  late List<FuncParam> _params;
+
+  @override
+  void initState() {
+    super.initState();
+    _params = List<FuncParam>.from(widget.params);
+  }
+
+  void _commit() {
+    ref.read(graphMutatorProvider.notifier).syncFunctionSignature(
+          widget.nodeId,
+          widget.isInputs,
+          _params,
+        );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < _params.length; i++)
+          _FuncParamEditRow(
+            param: _params[i],
+            isOutput: !widget.isInputs,
+            onChanged: (p) => setState(() {
+              _params[i] = p;
+              _commit();
+            }),
+            onRemove: () => setState(() {
+              _params.removeAt(i);
+              _commit();
+            }),
+          ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            icon: const Icon(Icons.add, size: 18),
+            label: Text(widget.isInputs ? '添加入参' : '添加出参'),
+            onPressed: () => setState(() {
+              _params.add(FuncParam(
+                name: widget.isInputs
+                    ? 'arg${_params.length + 1}'
+                    : 'out${_params.length + 1}',
+                type: PortType.any,
+              ));
+              _commit();
+            }),
+          ),
+        ),
+        if (_params.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 6),
+            child: Text(
+              widget.isInputs ? '此函数无入参' : '此函数无出参',
+              style: TextStyle(color: theme.colorScheme.outline, fontSize: 13),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// 单个 FuncParam 编辑行（名称 / 类型 / 默认值 / 描述 / 删除）。
+class _FuncParamEditRow extends StatelessWidget {
+  const _FuncParamEditRow({
+    required this.param,
+    required this.isOutput,
+    required this.onChanged,
+    required this.onRemove,
+  });
+
+  final FuncParam param;
+  final bool isOutput;
+  final ValueChanged<FuncParam> onChanged;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                flex: 2,
+                child: TextField(
+                  controller: TextEditingController(text: param.name),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                    hintText: '参数名',
+                  ),
+                  onChanged: (v) => onChanged(param.copyWith(name: v)),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                flex: 2,
+                child: DropdownButtonFormField<PortType>(
+                  value: param.type,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    border: OutlineInputBorder(),
+                    hintText: '类型',
+                  ),
+                  items: const [
+                    DropdownMenuItem(
+                        value: PortType.any, child: Text('any')),
+                    DropdownMenuItem(
+                        value: PortType.string, child: Text('string')),
+                    DropdownMenuItem(
+                        value: PortType.number, child: Text('number')),
+                    DropdownMenuItem(
+                        value: PortType.boolean, child: Text('boolean')),
+                    DropdownMenuItem(
+                        value: PortType.list, child: Text('list')),
+                    DropdownMenuItem(
+                        value: PortType.map, child: Text('map')),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) onChanged(param.copyWith(type: v));
+                  },
+                ),
+              ),
+              IconButton(
+                tooltip: '删除',
+                icon: Icon(Icons.remove_circle_outline,
+                    size: 20, color: theme.colorScheme.error),
+                onPressed: onRemove,
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          if (!isOutput)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: TextField(
+                controller:
+                    TextEditingController(text: _defaultText(param.defaultValue)),
+                decoration: const InputDecoration(
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                  hintText: '默认值（字面值；可空）',
+                ),
+                onChanged: (v) {
+                  final parsed = _parseDefault(v);
+                  onChanged(param.copyWith(defaultValue: parsed));
+                },
+              ),
+            ),
+          TextField(
+            controller: TextEditingController(text: param.description ?? ''),
+            decoration: const InputDecoration(
+              isDense: true,
+              border: OutlineInputBorder(),
+              hintText: '描述（可选）',
+            ),
+            onChanged: (v) => onChanged(param.copyWith(description: v)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _defaultText(Object? v) {
+    if (v == null) return '';
+    return v.toString();
+  }
+
+  /// 简单解析默认值字面值字符串。
+  ///
+  /// - 空字符串 → null
+  /// - "true"/"false" → bool
+  /// - 数字 → num (int/double)
+  /// - 其他 → 字符串原值
+  static Object? _parseDefault(String v) {
+    if (v.isEmpty) return null;
+    if (v == 'true') return true;
+    if (v == 'false') return false;
+    final num? parsed = num.tryParse(v);
+    if (parsed != null) return parsed;
+    return v;
+  }
 }
