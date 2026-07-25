@@ -1,29 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:dart_openai/dart_openai.dart';
 import 'package:http/http.dart' as http;
 
 import '../../../data/models/port.dart';
 import '../plugin_spec.dart';
-
-// 迁移说明（LLM SDK 方向）：
-// -----
-// 按需求 OpenAI 节点应使用官方 SDK（dart_openai，已在 pubspec.yaml 引入），
-// 而非手写 HTTP。当前实现仍保留手写 HTTP，原因：
-// 1. dart_openai 的 apiKey/baseUrl 为全局静态字段（OpenAI.apiKey / OpenAI.baseUrl），
-//    与本插件"每次 execute 按 config 注入"的 per-call 模型不匹配，
-//    直接替换会在并发调用时产生全局状态竞争。
-// 2. dart_openai 跨大版本（4.x → 5.x）API 有破坏性变更（消息模型从 String 改为
-//    ContentItem 数组），需在引入后按实际版本调整消息构造。
-// 3. 流式 SSE 解析在 SDK 中以 Stream<OpenAIStreamChatCompletionModel> 暴露，
-//    与现有 PluginEvent 适配需额外胶水代码。
-// 迁移路径（建议在能运行 flutter pub get + 集成测试的环境下进行）：
-//   - 新增 OpenAiSdkExecutor（implements PluginExecutor, StreamPluginExecutor），
-//     在 execute 开头 OpenAI.apiKey = config['apiKey']; OpenAI.baseUrl = base;
-//   - 用 OpenAI.instance.chat.create(...) 替换 _client.post(...)
-//   - 用 OpenAI.instance.chat.createStream(...) 替换手动 SSE 解析
-//   - 在 PluginRegistry.withBuiltins 用 OpenAiSdkExecutor() 替换 OpenAiExecutor()
-// Anthropic 暂无官方 Dart SDK，继续使用手写 HTTP。
 
 /// OpenAI Chat Completions 插件规格。
 ///
@@ -75,20 +57,43 @@ const PluginSpec openAiPluginSpec = PluginSpec(
   ],
 );
 
-/// OpenAI 执行器（同时实现 [PluginExecutor] 与 [StreamPluginExecutor]）。
+/// 全局调用串行锁。
 ///
-/// - [execute]：POST {baseUrl}/v1/chat/completions，解析 choices[0].message.content
-///   与 usage.total_tokens。
-/// - [executeStream]：用 stream:true，SSE 解析 data: 行，逐 token emit partial，
-///   流结束 emit done（汇总完整 content + usage）。
-/// - 非 200 抛异常带状态码与 body。
-class OpenAiExecutor implements PluginExecutor, StreamPluginExecutor {
-  OpenAiExecutor({http.Client? client}) : _client = client ?? http.Client();
+/// dart_openai 的 apiKey / baseUrl 为全局静态字段（[OpenAI.apiKey] /
+/// [OpenAI.baseUrl]），与本插件"每次 execute 按 config 注入"的 per-call 模型
+/// 不匹配。通过此锁将所有 SDK 调用串行化，确保每次调用期间全局配置不被
+/// 并发调用覆盖。序列化会牺牲一定并发度，但节点编辑器场景下 OpenAI 调用
+/// 频率低，可接受。
+Future<void> _openAiSdkLock = Future<void>.value();
 
-  final http.Client _client;
+/// 在串行锁保护下执行 action。
+Future<T> _withSdkLock<T>(Future<T> Function() action) {
+  final prev = _openAiSdkLock;
+  final completer = Completer<void>();
+  _openAiSdkLock = completer.future;
+  return prev.then((_) => action()).whenComplete(completer.complete);
+}
+
+/// OpenAI 执行器（基于 dart_openai 官方 SDK）。
+///
+/// 同时实现 [PluginExecutor] 与 [StreamPluginExecutor]：
+/// - [execute]：调用 [OpenAI.instance.chat.create]，解析 choices[0].message.content
+///   与 usage.total_tokens。
+/// - [executeStream]：调用 [OpenAI.instance.chat.createStream]，逐 token emit
+///   partial，流结束 emit done。
+///
+/// 因 SDK 使用全局静态 apiKey/baseUrl，所有调用经 [_withSdkLock] 串行化，
+/// 每次调用前注入 config。非 200 抛 [RequestFailedException] 转 StateError。
+///
+/// 注意：SDK 流式模式不返回 usage（[OpenAIStreamChatCompletionModel] 无 usage
+/// 字段），故流式输出 usage_tokens 恒为 0。
+class OpenAiExecutor implements PluginExecutor, StreamPluginExecutor {
+  OpenAiExecutor({http.Client? client}) : _client = client;
+
+  /// 可选 HTTP 客户端（测试注入用）；为 null 时 SDK 使用默认客户端。
+  final http.Client? _client;
 
   String _baseUrl(Map<String, dynamic> config) {
-    // baseUrl 取配置或默认值；去除末尾斜杠。
     final raw = config['baseUrl']?.toString().trim();
     if (raw == null || raw.isEmpty) return 'https://api.openai.com';
     return raw.endsWith('/') ? raw.substring(0, raw.length - 1) : raw;
@@ -125,6 +130,48 @@ class OpenAiExecutor implements PluginExecutor, StreamPluginExecutor {
     return const [];
   }
 
+  /// 将消息 Map 列表转为 SDK 消息模型列表。
+  List<OpenAIChatCompletionChoiceMessageModel> _toSdkMessages(
+    List<Map<String, dynamic>> messages,
+  ) {
+    return messages.map((m) {
+      final roleStr = m['role']?.toString() ?? 'user';
+      final role = OpenAIChatMessageRole.values.firstWhere(
+        (r) => r.name == roleStr,
+        orElse: () => OpenAIChatMessageRole.user,
+      );
+      final contentStr = m['content']?.toString() ?? '';
+      return OpenAIChatCompletionChoiceMessageModel(
+        role: role,
+        content: [
+          OpenAIChatCompletionChoiceMessageContentItemModel.text(contentStr),
+        ],
+      );
+    }).toList();
+  }
+
+  /// 从非流式响应中提取文本内容。
+  String _extractContent(OpenAIChatCompletionModel result) {
+    if (result.choices.isEmpty) return '';
+    final content = result.choices.first.message.content;
+    if (content == null) return '';
+    return content
+        .where((c) => c.text != null)
+        .map((c) => c.text!)
+        .join();
+  }
+
+  /// 从流式事件中提取增量文本。
+  String _extractDeltaContent(OpenAIStreamChatCompletionModel event) {
+    if (event.choices.isEmpty) return '';
+    final content = event.choices.first.delta.content;
+    if (content == null) return '';
+    return content
+        .where((c) => c?.text != null)
+        .map((c) => c!.text!)
+        .join();
+  }
+
   @override
   Future<Map<String, dynamic>> execute(
     PluginSpec spec,
@@ -136,53 +183,33 @@ class OpenAiExecutor implements PluginExecutor, StreamPluginExecutor {
       throw StateError('OpenAI 插件未配置 API Key');
     }
     final base = _baseUrl(config);
-    final messages = _normalizeMessages(inputs['messages']);
+    final messages = _toSdkMessages(_normalizeMessages(inputs['messages']));
     final model = inputs['model']?.toString() ?? 'gpt-4o-mini';
     final temperature = inputs['temperature'] is num
         ? (inputs['temperature'] as num).toDouble()
         : 0.7;
 
-    final uri = Uri.parse('$base/v1/chat/completions');
-    final body = jsonEncode({
-      'model': model,
-      'messages': messages,
-      'temperature': temperature,
-    });
-
-    final response = await _client.post(
-      uri,
-      headers: {
-        'Authorization': 'Bearer $apiKey',
-        'Content-Type': 'application/json',
-      },
-      body: body,
-    );
-
-    if (response.statusCode != 200) {
-      throw StateError(
-        'OpenAI 请求失败：${response.statusCode} ${response.reasonPhrase ?? ""}\n${response.body}',
-      );
-    }
-
-    final json = jsonDecode(response.body) as Map<String, dynamic>;
-    final choices = json['choices'];
-    String content = '';
-    if (choices is List && choices.isNotEmpty) {
-      final message = (choices[0] as Map<String, dynamic>)['message'];
-      if (message is Map<String, dynamic>) {
-        content = message['content']?.toString() ?? '';
+    return _withSdkLock(() async {
+      OpenAI.apiKey = apiKey;
+      OpenAI.baseUrl = base;
+      OpenAI.showLogs = false;
+      try {
+        final result = await OpenAI.instance.chat.create(
+          model: model,
+          messages: messages,
+          temperature: temperature,
+          client: _client,
+        );
+        return {
+          'content': _extractContent(result),
+          'usage_tokens': result.usage.totalTokens,
+        };
+      } on RequestFailedException catch (e) {
+        throw StateError(
+          'OpenAI 请求失败：${e.statusCode} ${e.message}',
+        );
       }
-    }
-    final usage = json['usage'];
-    int tokens = 0;
-    if (usage is Map<String, dynamic>) {
-      final t = usage['total_tokens'];
-      if (t is num) tokens = t.toInt();
-    }
-    return {
-      'content': content,
-      'usage_tokens': tokens,
-    };
+    });
   }
 
   @override
@@ -197,85 +224,65 @@ class OpenAiExecutor implements PluginExecutor, StreamPluginExecutor {
       return;
     }
     final base = _baseUrl(config);
-    final messages = _normalizeMessages(inputs['messages']);
+    final messages = _toSdkMessages(_normalizeMessages(inputs['messages']));
     final model = inputs['model']?.toString() ?? 'gpt-4o-mini';
     final temperature = inputs['temperature'] is num
         ? (inputs['temperature'] as num).toDouble()
         : 0.7;
 
-    final uri = Uri.parse('$base/v1/chat/completions');
-    final body = jsonEncode({
-      'model': model,
-      'messages': messages,
-      'temperature': temperature,
-      'stream': true,
-      'stream_options': {'include_usage': true},
-    });
-
-    final request = http.Request('POST', uri)
-      ..headers['Authorization'] = 'Bearer $apiKey'
-      ..headers['Content-Type'] = 'application/json'
-      ..body = body;
-
-    http.StreamedResponse response;
-    try {
-      response = await _client.send(request);
-    } catch (e) {
-      yield PluginEvent.error('OpenAI 网络错误：$e');
-      return;
-    }
-
-    if (response.statusCode != 200) {
-      final errorBody = await response.stream.bytesToString();
-      yield PluginEvent.error(
-        'OpenAI 请求失败：${response.statusCode}\n$errorBody',
-      );
-      return;
-    }
-
+    // 在锁保护下注入配置并消费整个流，逐 token 转发为 PluginEvent。
+    // SDK 流式模式不返回 usage，故 usage_tokens 恒为 0。
     final buffer = StringBuffer();
-    int totalTokens = 0;
-
-    // SSE 解析：按行读取，匹配 `data: ` 前缀。
-    final lineStream =
-        response.stream.transform(utf8.decoder).transform(const LineSplitter());
-
-    try {
-      await for (final line in lineStream) {
-        if (!line.startsWith('data:')) continue;
-        final payload = line.substring(5).trim();
-        if (payload.isEmpty) continue;
-        if (payload == '[DONE]') break;
-        try {
-          final chunk = jsonDecode(payload) as Map<String, dynamic>;
-          final choices = chunk['choices'];
-          if (choices is List && choices.isNotEmpty) {
-            final delta = (choices[0] as Map<String, dynamic>)['delta'];
-            if (delta is Map<String, dynamic>) {
-              final piece = delta['content'];
-              if (piece is String && piece.isNotEmpty) {
-                buffer.write(piece);
-                yield PluginEvent.partial(piece);
-              }
-            }
-          }
-          final usage = chunk['usage'];
-          if (usage is Map<String, dynamic>) {
-            final t = usage['total_tokens'];
-            if (t is num) totalTokens = t.toInt();
-          }
-        } catch (_) {
-          // 跳过无法解析的 chunk。
-        }
+    yield* _withSdkLockStream(() async* {
+      OpenAI.apiKey = apiKey;
+      OpenAI.baseUrl = base;
+      OpenAI.showLogs = false;
+      Stream<OpenAIStreamChatCompletionModel> stream;
+      try {
+        stream = OpenAI.instance.chat.createStream(
+          model: model,
+          messages: messages,
+          temperature: temperature,
+          client: _client,
+        );
+      } on RequestFailedException catch (e) {
+        yield PluginEvent.error('OpenAI 请求失败：${e.statusCode} ${e.message}');
+        return;
       }
-    } catch (e) {
-      yield PluginEvent.error('OpenAI 流解析错误：$e');
-      return;
-    }
 
-    yield PluginEvent.done({
-      'content': buffer.toString(),
-      'usage_tokens': totalTokens,
+      try {
+        await for (final event in stream) {
+          final piece = _extractDeltaContent(event);
+          if (piece.isNotEmpty) {
+            buffer.write(piece);
+            yield PluginEvent.partial(piece);
+          }
+        }
+      } catch (e) {
+        yield PluginEvent.error('OpenAI 流解析错误：$e');
+        return;
+      }
+      yield PluginEvent.done({
+        'content': buffer.toString(),
+        'usage_tokens': 0,
+      });
     });
   }
+}
+
+/// 在串行锁保护下消费一个 async generator 流（流期间持锁）。
+Stream<T> _withSdkLockStream<T>(Stream<T> Function() streamFactory) {
+  final controller = StreamController<T>();
+  _withSdkLock(() async {
+    try {
+      await for (final event in streamFactory()) {
+        controller.add(event);
+      }
+      await controller.close();
+    } catch (e, st) {
+      controller.addError(e, st);
+      await controller.close();
+    }
+  });
+  return controller.stream;
 }
