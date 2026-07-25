@@ -187,11 +187,16 @@ class NodeInterpreter implements InterpreterHost {
     return const RunResult();
   }
 
-  /// 查找入口节点：第一个（声明序）无入边的节点。
+  /// 查找入口节点：优先 function_input 节点，否则第一个（声明序）无入边的节点。
   ///
-  /// 控制流图中无入边的节点即函数入口（由 [FunctionDef.entry] 描述触发方式，
-  /// 但入口节点本身由图拓扑决定）。所有节点都有入边时返回 null（成环或空图）。
+  /// 入参节点（function_input）是函数的唯一入口。若不存在（旧项目迁移前），
+  /// 退化到拓扑规则：第一个无入边的节点。所有节点都有入边时返回 null（成环或空图）。
   String? _findEntryNodeId(FunctionDef function) {
+    // 优先 function_input 节点（每函数唯一）。
+    for (final n in function.nodes) {
+      if (n.kind == 'function_input') return n.id;
+    }
+    // 兜底：第一个无入边的节点（兼容旧图）。
     final hasIncoming = <String>{};
     for (final e in function.controlEdges) {
       hasIncoming.add(e.toNode);

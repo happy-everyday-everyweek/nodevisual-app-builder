@@ -267,8 +267,10 @@ void main() {
       );
       final restored = FunctionDef.fromJson(fn.toJson());
 
-      expect(restored.nodes.length, 1);
-      final r = restored.nodes.first;
+      // 迁移自动补 1 个 function_input + 1 个 function_output 节点。
+      expect(restored.nodes.length, 3);
+      // 原 function_call 节点保留（按 id 检索）。
+      final r = restored.nodes.firstWhere((n) => n.id == 'n1');
       expect(r.kind, 'function_call');
       expect(r.params['targetFunctionId'], 'f1');
       expect(r.params['q'], 'hello');
@@ -277,6 +279,15 @@ void main() {
       // 签名也往返保持。
       expect(restored.inputs.first.name, 'q');
       expect(restored.outputs.first.name, 'id');
+      // 自动生成的入参/出参节点存在。
+      expect(
+        restored.nodes.any((n) => n.kind == 'function_input'),
+        isTrue,
+      );
+      expect(
+        restored.nodes.any((n) => n.kind == 'function_output'),
+        isTrue,
+      );
     });
   });
 
@@ -319,12 +330,25 @@ void main() {
           {'fromNode': 'n1', 'fromPort': 'next', 'toNode': 'n2'},
         ],
       });
-      expect(fn.nodes.length, 2);
-      expect(fn.nodes[0].kind, 'variable_get');
-      expect(fn.nodes[1].kind, 'variable_set');
+      // 迁移自动补 1 个 function_input + 1 个 function_output 节点。
+      expect(fn.nodes.length, 4);
+      // 原节点保留（按 id 检索，顺序不变）。
+      final n1 = fn.nodes.firstWhere((n) => n.id == 'n1');
+      final n2 = fn.nodes.firstWhere((n) => n.id == 'n2');
+      expect(n1.kind, 'variable_get');
+      expect(n2.kind, 'variable_set');
       // 旧函数无签名 → inputs/outputs 为空（不崩溃）。
       expect(fn.inputs, isEmpty);
       expect(fn.outputs, isEmpty);
+      // 自动生成的入参/出参节点存在。
+      expect(
+        fn.nodes.any((n) => n.kind == 'function_input'),
+        isTrue,
+      );
+      expect(
+        fn.nodes.any((n) => n.kind == 'function_output'),
+        isTrue,
+      );
     });
 
     test('未知节点 kind 加载不崩溃', () {

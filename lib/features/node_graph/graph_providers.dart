@@ -3,6 +3,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../data/models/control_edge.dart';
 import '../../data/models/entry.dart';
+import '../../data/models/func_param.dart';
 import '../../data/models/function_def.dart';
 import '../../data/models/node.dart';
 import '../../data/models/port.dart';
@@ -107,12 +108,15 @@ class GraphMutator extends Notifier<FunctionDef?> {
   /// 添加节点；返回新节点 id。
   ///
   /// [position] 为画布坐标；不提供时默认 (0, 0)，由调用方在画布中心放置。
+  ///
+  /// 子母节点设计：当插入的节点有 2 个或以上控制流输出时，自动走
+  /// [addWithBranches] 生成母节点 + 各输出端口对应的 branch 子节点。
   String addNode(String kind, {NodePosition? position}) {
     final fn = _currentFunction;
     if (fn == null) return '';
-    // 子母节点：插入 if 条件节点时自动生成母节点 + 2 个子节点（分支出口）。
-    if (kind == 'if') {
-      return addIfWithBranches(position: position);
+    // 子母节点：controlOutputs >= 2 的节点自动生成母节点 + 子节点。
+    if (_needsBranches(kind)) {
+      return addWithBranches(kind, position: position);
     }
     final node = _createDefaultNode(kind)
         .copyWith(position: position ?? const NodePosition(x: 0, y: 0));
@@ -120,36 +124,57 @@ class GraphMutator extends Notifier<FunctionDef?> {
     return node.id;
   }
 
-  /// 插入 if 条件节点（母节点）+ 2 个 if_branch 子节点（分支出口）。
+  /// 判断 kind 是否需要子母节点设计（controlOutputs >= 2）。
   ///
-  /// 子母节点设计：用户插入条件节点时，自动生成：
-  /// - 1 个母节点（if，含 condition + cases=['true','false']）
-  /// - 2 个子节点（if_branch，分别对应 'true' / 'false' 分支）
+  /// 通过查询 [NodeKindRegistry] 的 spec，解析默认 outputs 判断。
+  /// branch 子节点本身只有 1 个输出，不触发递归。入参/出参节点也不触发。
+  bool _needsBranches(String kind) {
+    if (kind == 'branch' || kind == 'function_input' ||
+        kind == 'function_output' || kind == 'return') {
+      return false;
+    }
+    final spec = NodeKindRegistry.getSpec(kind);
+    if (spec == null) return false;
+    // 动态输出节点（如 if）：用默认 params 解析输出端口数。
+    final params = <String, dynamic>{
+      for (final p in spec.paramSchema) p.name: p.defaultValue,
+    };
+    final outputs = resolveOutputsInProject(spec, params, const []);
+    return outputs.controlOutputs.length >= 2;
+  }
+
+  /// 插入母节点 + 各控制流输出端口对应的 branch 子节点（子母节点设计）。
   ///
-  /// 子节点 positioned 在母节点下方左右展开。返回母节点 id。
-  String addIfWithBranches({NodePosition? position}) {
+  /// 通用版本：服务于 if / loop 等所有 controlOutputs >= 2 的母节点。
+  /// - 创建 1 个母节点（按 [kind] 默认规格）
+  /// - 为母节点的每个控制流输出端口创建 1 个 branch 子节点
+  /// - 自动连线：母节点端口 → 对应 branch 子节点入口
+  ///
+  /// 子节点 positioned 在母节点下方水平展开。返回母节点 id。
+  String addWithBranches(String kind, {NodePosition? position}) {
     final fn = _currentFunction;
     if (fn == null) return '';
     final pos = position ?? const NodePosition(x: 0, y: 0);
-    final parentNode = _createDefaultNode('if').copyWith(position: pos);
-    final cases = _ifCasesOf(parentNode);
+    final parentNode = _createDefaultNode(kind).copyWith(position: pos);
+    final ports = _controlPortNamesOf(parentNode);
     final children = <Node>[];
     final newEdges = <ControlEdge>[];
-    for (var i = 0; i < cases.length; i++) {
-      final childPos = _branchPosition(pos, i, cases.length);
-      final child = _createDefaultNode('if_branch').copyWith(
+    for (var i = 0; i < ports.length; i++) {
+      final portName = ports[i];
+      final childPos = _branchPosition(pos, i, ports.length);
+      final child = _createDefaultNode('branch').copyWith(
         position: childPos,
         params: {
           'parentId': parentNode.id,
-          'caseName': cases[i],
-          'name': '分支: ${cases[i]}',
+          'portName': portName,
+          'name': '分支: $portName',
         },
       );
       children.add(child);
-      // 自动连线：母节点的 case 输出 → 子分支节点入口。
+      // 自动连线：母节点的端口输出 → branch 子节点入口。
       newEdges.add(ControlEdge(
         fromNode: parentNode.id,
-        fromPort: cases[i],
+        fromPort: portName,
         toNode: child.id,
       ));
     }
@@ -160,41 +185,43 @@ class GraphMutator extends Notifier<FunctionDef?> {
     return parentNode.id;
   }
 
-  /// 同步 if 母节点的分支子节点：按当前 cases 增删 if_branch 子节点。
+  /// 同步母节点的分支子节点：按当前控制流输出端口增删 branch 子节点。
   ///
-  /// 当用户在节点编辑页修改 if 的 cases 后调用：
-  /// - 新增的 case → 创建对应 if_branch 子节点（positioned 在母节点下方）
-  /// - 删除的 case → 移除对应 if_branch 子节点及其关联边
-  /// - 已存在的 case → 保留（不重置用户已建立的连线）
-  void syncIfBranches(String ifNodeId) {
+  /// 通用版本：当母节点的 controlOutputs 动态变化时（如 if 的 cases 变更）调用：
+  /// - 新增的端口 → 创建对应 branch 子节点（positioned 在母节点下方）
+  /// - 删除的端口 → 移除对应 branch 子节点及其关联边
+  /// - 已存在的端口 → 保留（不重置用户已建立的连线）
+  ///
+  /// 静态输出节点（如 loop 的 body/completed）输出不变，调用本方法为幂等无操作。
+  void syncBranches(String parentNodeId) {
     final fn = _currentFunction;
     if (fn == null) return;
     Node? parentNode;
     for (final n in fn.nodes) {
-      if (n.id == ifNodeId && n.kind == 'if') {
+      if (n.id == parentNodeId && n.kind != 'branch') {
         parentNode = n;
         break;
       }
     }
     if (parentNode == null) return;
-    final desiredCases = _ifCasesOf(parentNode);
-    // 现有子节点：parentId == ifNodeId 的 if_branch 节点。
+    final desiredPorts = _controlPortNamesOf(parentNode);
+    // 现有子节点：parentId == parentNodeId 的 branch 节点。
     final existingChildren = fn.nodes
         .where((n) =>
-            n.kind == 'if_branch' && n.params['parentId'] == ifNodeId)
+            n.kind == 'branch' && n.params['parentId'] == parentNodeId)
         .toList(growable: false);
-    final existingCaseNames = existingChildren
-        .map((n) => n.params['caseName']?.toString() ?? '')
+    final existingPortNames = existingChildren
+        .map((n) => n.params['portName']?.toString() ?? '')
         .toList(growable: false);
 
     final toAdd = <String>[];
-    for (final c in desiredCases) {
-      if (!existingCaseNames.contains(c)) toAdd.add(c);
+    for (final p in desiredPorts) {
+      if (!existingPortNames.contains(p)) toAdd.add(p);
     }
     final toRemove = <String>{};
-    for (final i = 0; i < existingChildren.length; i++) {
-      final name = existingCaseNames[i];
-      if (!desiredCases.contains(name)) {
+    for (var i = 0; i < existingChildren.length; i++) {
+      final name = existingPortNames[i];
+      if (!desiredPorts.contains(name)) {
         toRemove.add(existingChildren[i].id);
       }
     }
@@ -207,22 +234,22 @@ class GraphMutator extends Notifier<FunctionDef?> {
     }
     final newBranchNodes = <Node>[];
     final newEdges = <ControlEdge>[];
-    for (final c in toAdd) {
-      final idx = desiredCases.indexOf(c);
-      final childPos = _branchPosition(parentNode.position, idx, desiredCases.length);
-      final child = _createDefaultNode('if_branch').copyWith(
+    for (final p in toAdd) {
+      final idx = desiredPorts.indexOf(p);
+      final childPos = _branchPosition(parentNode.position, idx, desiredPorts.length);
+      final child = _createDefaultNode('branch').copyWith(
         position: childPos,
         params: {
-          'parentId': ifNodeId,
-          'caseName': c,
-          'name': '分支: $c',
+          'parentId': parentNodeId,
+          'portName': p,
+          'name': '分支: $p',
         },
       );
       newBranchNodes.add(child);
-      // 自动连线：母节点的 case 输出 → 新子分支节点入口。
+      // 自动连线：母节点的端口输出 → 新 branch 子节点入口。
       newEdges.add(ControlEdge(
-        fromNode: ifNodeId,
-        fromPort: c,
+        fromNode: parentNodeId,
+        fromPort: p,
         toNode: child.id,
       ));
     }
@@ -242,20 +269,19 @@ class GraphMutator extends Notifier<FunctionDef?> {
     ));
   }
 
-  /// 读取 if 节点当前的 cases 列表（含 default）。
-  List<String> _ifCasesOf(Node ifNode) {
-    final rawCases = ifNode.params['cases'];
-    List<String> cases;
-    if (rawCases is List) {
-      cases = rawCases.map((e) => e.toString()).toList(growable: false);
-    } else {
-      cases = const ['true', 'false'];
+  /// 读取节点当前的控制流输出端口名列表。
+  ///
+  /// 优先用节点实例的 [Node.controlOutputs]（已解析），兜底用 spec 默认输出。
+  List<String> _controlPortNamesOf(Node node) {
+    if (node.controlOutputs.isNotEmpty) {
+      return node.controlOutputs.map((c) => c.name).toList(growable: false);
     }
-    if (cases.isEmpty) cases = const ['true'];
-    if (ifNode.params['includeDefault'] == true) {
-      cases = [...cases, 'default'];
-    }
-    return cases;
+    // 兜底：从 spec 解析（适用于刚创建、controlOutputs 未填充的情况）。
+    final spec = NodeKindRegistry.getSpec(node.kind);
+    if (spec == null) return const ['next'];
+    final outputs = resolveOutputsInProject(spec, node.params, const []);
+    final names = outputs.controlOutputs.map((c) => c.name).toList(growable: false);
+    return names.isEmpty ? const ['next'] : names;
   }
 
   /// 计算第 [index] 个分支子节点相对母节点的画布位置。
@@ -349,6 +375,40 @@ class GraphMutator extends Notifier<FunctionDef?> {
             : n,)
         .toList(growable: false);
     _commit(fn.copyWith(nodes: newNodes));
+  }
+
+  /// 同步函数签名（入参/出参节点编辑签名时调用）。
+  ///
+  /// 入参/出参节点取代侧边栏签名编辑：
+  /// - [isInputs] 为 true：[params] 替换 [FunctionDef.inputs]，
+  ///   同时把对应 function_input 节点的 dataOutputs 更新为 [params] 派生的 DataOutput。
+  /// - [isInputs] 为 false：[params] 替换 [FunctionDef.outputs]，
+  ///   function_output 节点无需更新 outputs（终止节点无数据输出）。
+  ///
+  /// 同时刷新依赖此函数签名的 function_call 节点端口由调用方在进入编辑页时
+  /// 按 [NodeKindSpec.projectOutputs] 重新派生，此处不处理。
+  void syncFunctionSignature(
+    String ioNodeId,
+    bool isInputs,
+    List<FuncParam> params,
+  ) {
+    final fn = _currentFunction;
+    if (fn == null) return;
+    // 找到对应 IO 节点（仅更新同 id 节点的 dataOutputs）。
+    final newNodes = fn.nodes.map((n) {
+      if (n.id != ioNodeId) return n;
+      if (isInputs && n.kind == 'function_input') {
+        return n.copyWith(
+          dataOutputs: dataOutputsFromParams(params),
+        );
+      }
+      return n;
+    }).toList(growable: false);
+    _commit(fn.copyWith(
+      inputs: isInputs ? params : fn.inputs,
+      outputs: isInputs ? fn.outputs : params,
+      nodes: newNodes,
+    ));
   }
 
   // ---- 控制流边 ----

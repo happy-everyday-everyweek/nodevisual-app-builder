@@ -632,21 +632,24 @@ class NodeKindRegistry {
         defaultDataOutputs: [],
         dynamicOutputs: _ifOutputs,
       ),
-      // ---- if 分支子节点（子母节点设计：插入 if 时自动生成的子节点）----
+      // ---- 通用分支子节点（子母节点设计：插入多输出母节点时自动生成的子节点）----
+      // 服务于 if / loop 等所有 controlOutputs >= 2 的母节点。
+      // 每个子节点对应母节点的一个控制流输出端口，纯控制流传递（走 next）。
+      // 面板过滤掉，不允许用户手动添加（由 addWithBranches 自动创建）。
       NodeKindSpec(
-        kind: 'if_branch',
-        displayName: '条件分支出口',
+        kind: 'branch',
+        displayName: '分支出口',
         category: NodeCategory.flow,
         paramSchema: const [
           ParamSpec(
             name: 'parentId',
-            label: '所属条件节点',
+            label: '所属母节点',
             inputType: ParamInputType.text,
             defaultValue: '',
           ),
           ParamSpec(
-            name: 'caseName',
-            label: '分支名',
+            name: 'portName',
+            label: '端口名',
             inputType: ParamInputType.text,
             defaultValue: '',
           ),
@@ -684,28 +687,41 @@ class NodeKindRegistry {
         defaultControlOutputs: ['body', 'completed'],
         defaultDataOutputs: [(name: 'index', type: PortType.number)],
       ),
+
+      // ---- 函数入参 / 出参节点（取代侧边栏签名编辑 + return 节点）----
+      //
+      // 每个函数自动生成 1 个 function_input + 1 个 function_output 节点，
+      // 整个函数从入参节点走到出参节点。
+      // - function_input：函数唯一入口，dataOutputs 来自 FunctionDef.inputs，
+      //   由 syncFunctionSignature 在签名变更时直接写入 Node.dataOutputs。
+      // - function_output：函数唯一出口，params['values'] 为 map<outputName, ref>，
+      //   执行时收集 values 作为函数返回值并终止控制流。
       NodeKindSpec(
-        kind: 'return',
-        displayName: '返回',
+        kind: 'function_input',
+        displayName: '入参',
+        category: NodeCategory.flow,
+        // 签名（inputs）直接存储在 FunctionDef.inputs，节点编辑页特殊渲染。
+        // dataOutputs 在创建/签名同步时直接写入 Node.dataOutputs。
+        paramSchema: const [],
+        defaultControlOutputs: ['next'],
+        defaultDataOutputs: [],
+      ),
+      NodeKindSpec(
+        kind: 'function_output',
+        displayName: '出参',
         category: NodeCategory.flow,
         paramSchema: const [
-          // 单返回值（向后兼容）：value 字段为旧式单返回值。
-          // 多返回值（新）：values 为 map<name, ref>，按函数 outputs 名映射。
-          ParamSpec(
-            name: 'value',
-            label: '返回值（单返回，向后兼容）',
-            inputType: ParamInputType.text,
-            acceptsRef: true,
-            expectedType: PortType.any,
-          ),
+          // 多返回值映射：key = output 名，value = `#` 引用或字面值。
+          // 键建议来自函数 outputs 名（节点编辑页特殊处理 suggestedKeys）。
           ParamSpec(
             name: 'values',
-            label: '多返回值映射（按函数 outputs 名）',
+            label: '返回值映射（按函数 outputs 名）',
             inputType: ParamInputType.keyValueMap,
             acceptsRef: true,
             expectedType: PortType.map,
           ),
         ],
+        // 终止节点：无控制流输出，执行后结束函数。
         defaultControlOutputs: [],
         defaultDataOutputs: [],
       ),

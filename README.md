@@ -1,6 +1,6 @@
 # NodeVisual App Builder
 
-端侧可视化节点编程工具（Android 优先）——通过连接节点形成函数，可视化 UI 编辑器，一键编译打包为 Web / Android / Windows 多端应用。
+跨端可视化节点编程工具——通过连接节点形成函数，可视化 UI 编辑器，一键编译打包为 Web / Android / Windows 多端应用。
 
 ## 功能
 
@@ -40,7 +40,7 @@ lib/
 
 ## 技术栈
 
-- **Flutter** / **Dart**（Android 优先）
+- **Flutter** / **Dart**（跨端：Web / Android / Windows）
 - **Riverpod** 状态管理
 - **GoRouter** 声明式路由
 - **SQLite** 本地数据库

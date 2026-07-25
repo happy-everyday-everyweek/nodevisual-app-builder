@@ -1,4 +1,5 @@
 import 'package:collection/collection.dart';
+import 'package:uuid/uuid.dart';
 
 import 'control_edge.dart';
 import 'entry.dart';
@@ -7,6 +8,7 @@ import 'node.dart';
 import 'port.dart';
 
 const DeepCollectionEquality _funcDeepEq = DeepCollectionEquality();
+const Uuid _migrateUuid = Uuid();
 
 /// 函数局部变量定义。
 ///
@@ -202,6 +204,93 @@ class FunctionDef {
     return copyWith(inputs: derivedInputs);
   }
 
+  /// 节点级迁移：补全入参/出参节点，转换旧 return 节点为 function_output。
+  ///
+  /// 旧项目（无 function_input/function_output 节点）加载时自动迁移：
+  /// - 第一个 return 节点 → 转换为 function_output 节点（保留 values 映射，
+  ///   单返回 value 转换为 `{'value': value}` 形式）
+  /// - 其余 return 节点 → 删除（含关联边）
+  /// - 若无 return 节点可转换，补充一个空的 function_output 节点
+  /// - 若无 function_input 节点，补充一个（dataOutputs 来自 inputs 签名）
+  ///
+  /// 已有 function_input/function_output 节点的函数直接返回原值（幂等）。
+  FunctionDef migrateNodes() {
+    final hasInput = nodes.any((n) => n.kind == 'function_input');
+    var hasOutput = nodes.any((n) => n.kind == 'function_output');
+    if (hasInput && hasOutput) return this;
+
+    var newNodes = List<Node>.from(nodes);
+    var newEdges = List<ControlEdge>.from(controlEdges);
+
+    // return → function_output 转换（仅第一个 return，其余删除）。
+    if (!hasOutput) {
+      int? firstReturnIdx;
+      for (var i = 0; i < newNodes.length; i++) {
+        if (newNodes[i].kind == 'return') {
+          firstReturnIdx = i;
+          break;
+        }
+      }
+      if (firstReturnIdx != null) {
+        final returnNode = newNodes[firstReturnIdx];
+        // 合并 values：优先用多返回 values，否则单返回 value 包成 {'value': ...}。
+        final values = <String, dynamic>{};
+        final rawValues = returnNode.params['values'];
+        if (rawValues is Map && rawValues.isNotEmpty) {
+          for (final entry in rawValues.entries) {
+            values[entry.key.toString()] = entry.value;
+          }
+        } else if (returnNode.params['value'] != null) {
+          values['value'] = returnNode.params['value'];
+        }
+        newNodes[firstReturnIdx] = returnNode.copyWith(
+          kind: 'function_output',
+          params: {'values': values, 'name': '出参'},
+          controlOutputs: const [],
+          dataOutputs: const [],
+        );
+        // 删除其余 return 节点（及其关联边）。
+        final returnIds = newNodes
+            .where((n) => n.kind == 'return')
+            .map((n) => n.id)
+            .toSet();
+        newNodes = newNodes.where((n) => n.kind != 'return').toList();
+        newEdges = newEdges
+            .where((e) =>
+                !returnIds.contains(e.fromNode) &&
+                !returnIds.contains(e.toNode))
+            .toList();
+        hasOutput = true;
+      }
+    }
+
+    // 无 return 可转换 → 补充空 function_output 节点。
+    if (!hasOutput) {
+      newNodes.add(Node(
+        id: _migrateUuid.v4(),
+        kind: 'function_output',
+        params: const {'name': '出参'},
+        position: const NodePosition(x: 300, y: 0),
+      ));
+    }
+
+    // 补充 function_input 节点（dataOutputs 来自 inputs 签名）。
+    if (!hasInput) {
+      newNodes.add(Node(
+        id: _migrateUuid.v4(),
+        kind: 'function_input',
+        params: const {'name': '入参'},
+        position: const NodePosition(x: -300, y: 0),
+        controlOutputs: const [ControlOutput(name: 'next')],
+        dataOutputs: [
+          for (final p in inputs) DataOutput(name: p.name, type: p.type),
+        ],
+      ));
+    }
+
+    return copyWith(nodes: newNodes, controlEdges: newEdges);
+  }
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -282,7 +371,7 @@ class FunctionDef {
                 .toList() ??
             const [],
         version: (json['version'] as num?)?.toInt() ?? 1,
-      ).migrateSignature();
+      ).migrateSignature().migrateNodes();
 
   @override
   String toString() => 'FunctionDef($name#$id)';
