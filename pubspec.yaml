@@ -1,7 +1,7 @@
 name: nodevisual_app_builder
 description: 端侧可视化节点编程工具，Android 优先
 publish_to: 'none'
-version: 0.1.0+1
+version: 0.3.0+1
 
 environment:
   sdk: '>=3.6.0 <4.0.0'
