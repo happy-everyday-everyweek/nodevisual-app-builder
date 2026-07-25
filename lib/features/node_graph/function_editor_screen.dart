@@ -90,9 +90,17 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
 
   @override
   void dispose() {
+    // 先清空当前编辑函数 id，让 GraphMutator 进入 null 状态，避免
+    // bumpVersion 触发 projectMutatorProvider 通知时，已 dispose 的
+    // 监听者收到重建回调导致控制台异常。
+    ref.read(editedFunctionIdProvider.notifier).state = null;
     // 退出编辑器时自增函数版本号（每次编辑会话 +1）。
     // ref 在 super.dispose() 前仍可用。
-    ref.read(graphMutatorProvider.notifier).bumpVersion();
+    try {
+      ref.read(graphMutatorProvider.notifier).bumpVersion();
+    } catch (_) {
+      // 页面已卸载时忽略版本自增异常。
+    }
     _transformController.dispose();
     super.dispose();
   }

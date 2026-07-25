@@ -1329,14 +1329,23 @@ class NodeKindRegistry {
         kind: 'open_link',
         displayName: '打开链接',
         category: NodeCategory.function,
-        description: '根据输入链接的协议前缀自动选择打开方式：\n'
-            '- http:// 或 https://：用浏览器打开网页（全平台）。\n'
+        description: '根据输入链接的协议前缀自动选择打开方式，并返回是否成功。\n'
+            '支持的协议前缀：\n'
+            '- http:// 或 https://：用系统浏览器打开网页（Web / Android / Windows 均支持）。\n'
             '- file:///sdcard/...：打开本地文件（仅 Android 可用，需文件访问权限）。\n'
             '- Android Intent 协议（intent://...;end 或 intent:...;end）：'
-            '以安卓系统内部机制打开（仅 Android 可用）。\n'
-            '- 应用链接（scheme://，如 myapp://page）：打开应用指定页面'
-            '（仅 Android 可靠支持，部分 scheme 在其他平台无效）。\n'
-            '注意：file://、intent、自定义 scheme 协议仅在 Android 端可用。',
+            '通过系统 Intent 打开指定组件（仅 Android 可用）。\n'
+            '- 应用链接（scheme://，如 myapp://page）：打开对应应用的指定页面'
+            '（仅 Android 可靠支持，其他平台可能无响应）。\n'
+            '\n'
+            '示例：\n'
+            '  https://example.com\n'
+            '  file:///sdcard/Download/report.pdf\n'
+            '  intent://scan/#Intent;scheme=zxing;package=com.google.zxing.client.android;end\n'
+            '  myapp://home?id=123\n'
+            '\n'
+            '注意：file://、intent、自定义 scheme 协议仅在 Android 端可用；'
+            'Web 端仅建议传入 http:// 或 https://。',
         paramSchema: const [
           ParamSpec(
             name: 'link',
