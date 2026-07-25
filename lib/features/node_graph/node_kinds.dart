@@ -230,6 +230,12 @@ class NodeKindSpec {
   /// 例：`plugin_haptic` 仅移动端有效（[BuildTarget.android]）。
   final List<BuildTarget>? platforms;
 
+  /// 节点描述（可选）。
+  ///
+  /// 用于节点面板与节点编辑页展示节点用途、平台限制等说明。
+  /// 例：`open_link` 节点描述不同协议的平台支持情况。
+  final String? description;
+
   const NodeKindSpec({
     required this.kind,
     required this.displayName,
@@ -241,6 +247,7 @@ class NodeKindSpec {
     this.projectOutputs,
     this.pluginId,
     this.platforms,
+    this.description,
   });
 
   /// 是否为全平台可用（platforms 为 null/空时为 true）。
@@ -1153,78 +1160,10 @@ class NodeKindRegistry {
       ),
 
       // ---- 内置插件 ----
-      NodeKindSpec(
-        kind: 'plugin_openai',
-        displayName: 'OpenAI 插件',
-        category: NodeCategory.plugin,
-        pluginId: 'llm_openai',
-        paramSchema: const [
-          ParamSpec(
-            name: 'messages',
-            label: '消息列表',
-            inputType: ParamInputType.text,
-            acceptsRef: true,
-            expectedType: PortType.list,
-          ),
-          ParamSpec(
-            name: 'model',
-            label: '模型',
-            inputType: ParamInputType.text,
-            defaultValue: 'gpt-4o-mini',
-          ),
-          ParamSpec(
-            name: 'temperature',
-            label: '温度',
-            inputType: ParamInputType.number,
-            defaultValue: 0.7,
-          ),
-        ],
-        defaultControlOutputs: ['next'],
-        defaultDataOutputs: [
-          (name: 'content', type: PortType.string),
-          (name: 'usage_tokens', type: PortType.number),
-        ],
-      ),
-      NodeKindSpec(
-        kind: 'plugin_anthropic',
-        displayName: 'Anthropic 插件',
-        category: NodeCategory.plugin,
-        pluginId: 'llm_anthropic',
-        paramSchema: const [
-          ParamSpec(
-            name: 'messages',
-            label: '消息列表',
-            inputType: ParamInputType.text,
-            acceptsRef: true,
-            expectedType: PortType.list,
-          ),
-          ParamSpec(
-            name: 'model',
-            label: '模型',
-            inputType: ParamInputType.text,
-            defaultValue: 'claude-3-5-sonnet-20240612',
-          ),
-          ParamSpec(
-            name: 'maxTokens',
-            label: '最大 token 数',
-            inputType: ParamInputType.number,
-            defaultValue: 1024,
-          ),
-        ],
-        defaultControlOutputs: ['next'],
-        defaultDataOutputs: [
-          (name: 'content', type: PortType.string),
-          (name: 'usage_tokens', type: PortType.number),
-        ],
-      ),
-
-      // ---- 原生能力插件（通过插件形式发布的各端原生能力）----
-      // 平台限制说明：
-      // - plugin_clipboard：Flutter Clipboard 在 Web/Android/Windows 均可用，全平台。
-      // - plugin_haptic：HapticFeedback 仅移动端有效（Android/iOS），Web/Windows 无效。
-      //   当前 BuildTarget 仅 Android 属移动端 → platforms: [android]。
-      // - plugin_share：share_plus 在 Android/Windows 行为一致，Web 端走 Web Share API
-      //   但兼容性差，标 [android, windows]。
+      // 注意：OpenAI / Anthropic 已迁移到市场（见 marketplace/built_in_plugins.dart）。
+      // 用户从市场安装后，节点面板通过 installedPluginSpecsProvider 动态追加
+      // plugin_<id> 节点（kind = plugin_llm_openai / plugin_llm_anthropic），
+      // 不再在此硬编码 NodeKindSpec。
       NodeKindSpec(
         kind: 'plugin_clipboard',
         displayName: '剪贴板',
@@ -1322,6 +1261,94 @@ class NodeKindRegistry {
         ],
         defaultControlOutputs: ['next'],
         defaultDataOutputs: [(name: 'result', type: PortType.any)],
+      ),
+
+      // ---- 网络请求节点（执行与函数分类）----
+      // 通用 HTTP 请求节点：支持 GET / POST / PUT / DELETE，可设置请求头、
+      // 请求体与超时。响应解析为 status / body / headers 三个数据输出。
+      NodeKindSpec(
+        kind: 'http_request',
+        displayName: '网络请求',
+        category: NodeCategory.function,
+        description: '通用 HTTP 请求节点，支持 GET/POST/PUT/DELETE/PATCH，'
+            '可设置请求头、请求体与超时。响应输出 status / body / headers。'
+            '全平台可用（Web/Android/Windows）。',
+        paramSchema: const [
+          ParamSpec(
+            name: 'method',
+            label: '请求方法',
+            inputType: ParamInputType.dropdown,
+            options: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+            defaultValue: 'GET',
+          ),
+          ParamSpec(
+            name: 'url',
+            label: 'URL',
+            inputType: ParamInputType.text,
+            acceptsRef: true,
+            expectedType: PortType.string,
+            defaultValue: '',
+          ),
+          ParamSpec(
+            name: 'headers',
+            label: '请求头（键值对）',
+            inputType: ParamInputType.keyValueMap,
+            acceptsRef: true,
+            expectedType: PortType.map,
+          ),
+          ParamSpec(
+            name: 'body',
+            label: '请求体（POST/PUT/PATCH）',
+            inputType: ParamInputType.text,
+            acceptsRef: true,
+            expectedType: PortType.string,
+          ),
+          ParamSpec(
+            name: 'timeoutMs',
+            label: '超时（毫秒）',
+            inputType: ParamInputType.number,
+            defaultValue: 30000,
+          ),
+        ],
+        defaultControlOutputs: ['next'],
+        defaultDataOutputs: [
+          (name: 'status', type: PortType.number),
+          (name: 'body', type: PortType.string),
+          (name: 'headers', type: PortType.map),
+        ],
+      ),
+
+      // ---- 打开链接节点（执行与函数分类）----
+      // 根据 [link] 协议前缀自动选择打开方式：
+      // - http:// / https://：浏览器打开网页（全平台）
+      // - file:///sdcard/...：打开本地文件（仅 Android，需文件访问权限）
+      // - intent://...;end：以 Android Intent 机制打开（仅 Android）
+      // - <scheme>://：应用链接，打开指定应用页面（仅 Android，部分 scheme 仅 Android 可用）
+      // 部分协议仅在 Android 端可用，详见节点描述提示。
+      NodeKindSpec(
+        kind: 'open_link',
+        displayName: '打开链接',
+        category: NodeCategory.function,
+        description: '根据输入链接的协议前缀自动选择打开方式：\n'
+            '- http:// 或 https://：用浏览器打开网页（全平台）。\n'
+            '- file:///sdcard/...：打开本地文件（仅 Android 可用，需文件访问权限）。\n'
+            '- Android Intent 协议（intent://...;end 或 intent:...;end）：'
+            '以安卓系统内部机制打开（仅 Android 可用）。\n'
+            '- 应用链接（scheme://，如 myapp://page）：打开应用指定页面'
+            '（仅 Android 可靠支持，部分 scheme 在其他平台无效）。\n'
+            '注意：file://、intent、自定义 scheme 协议仅在 Android 端可用。',
+        paramSchema: const [
+          ParamSpec(
+            name: 'link',
+            label: '链接 / Intent / 文件路径',
+            inputType: ParamInputType.text,
+            acceptsRef: true,
+            expectedType: PortType.string,
+            defaultValue: '',
+          ),
+        ],
+        defaultControlOutputs: ['next'],
+        defaultDataOutputs: [(name: 'ok', type: PortType.boolean)],
       ),
     ];
 

@@ -353,15 +353,18 @@ class GraphMutator extends Notifier<FunctionDef?> {
     _commit(fn.copyWith(nodes: newNodes));
   }
 
-  /// 一次性更新节点的 params / controlOutputs / dataOutputs（单次提交）。
+  /// 一次性更新节点的 params / controlOutputs / dataOutputs / annotation
+  /// （单次提交）。
   ///
-  /// 节点编辑页在修改参数（可能同时引发动态 outputs 变化）时使用，
-  /// 避免多次分别提交导致的中间态与多余持久化。任一字段为 null 表示保持原值。
+  /// 节点编辑页在修改参数（可能同时引发动态 outputs 变化）或编辑节点注释时
+  /// 使用，避免多次分别提交导致的中间态与多余持久化。任一字段为 null 表示
+  /// 保持原值。
   void updateNode(
     String id, {
     Map<String, dynamic>? params,
     List<ControlOutput>? controlOutputs,
     List<DataOutput>? dataOutputs,
+    String? annotation,
   }) {
     final fn = _currentFunction;
     if (fn == null) return;
@@ -371,6 +374,7 @@ class GraphMutator extends Notifier<FunctionDef?> {
                 params: params ?? n.params,
                 controlOutputs: controlOutputs ?? n.controlOutputs,
                 dataOutputs: dataOutputs ?? n.dataOutputs,
+                annotation: annotation ?? n.annotation,
               )
             : n,)
         .toList(growable: false);

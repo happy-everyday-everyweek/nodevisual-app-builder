@@ -2,12 +2,15 @@ import 'dart:convert';
 
 import '../../data/models/port.dart';
 import '../plugins/plugin_spec.dart';
+import 'ui_component_def.dart';
 
 /// 插件清单（插件源仓库根目录 `plugin.json`）。
 ///
 /// 完整描述一个市场插件的元数据、输入/输出端口、配置 schema 与
-/// HTTP 执行器模板。安装时从插件仓库下载此文件并持久化，
-/// 运行时由 [HttpPluginExecutor] 解释执行。
+/// 执行器定义。安装时从插件仓库下载此文件并持久化，
+/// 运行时由 [HttpPluginExecutor] 解释执行（HTTP 类型）或
+/// 从内置 native 执行器注册表查找（native 类型），或由
+/// [FunctionPluginExecutor] 解释嵌入的函数 IR（function 类型）。
 class PluginManifest {
   /// 插件唯一标识。
   final String id;
@@ -36,8 +39,47 @@ class PluginManifest {
   /// 配置字段规格。
   final List<ManifestConfigField> configSchema;
 
-  /// HTTP 执行器定义。
+  /// HTTP 执行器定义（仅 [executorType] == 'http' 时有效）。
   final HttpExecutorDef executor;
+
+  /// 执行器类型：'http'（默认，HTTP 模板执行器）、'native'（内置原生执行器）、
+  /// 'function'（函数执行器）或 'ui_component'（UI 组件插件）。
+  ///
+  /// - 'http'：使用 [HttpPluginExecutor] 按 [executor] 模板渲染请求。
+  /// - 'native'：从内置原生执行器注册表（id → executor 实例）查找，
+  ///   用于 OpenAI / Anthropic 等需要原生 SDK 的插件。native 类型插件
+  ///   仍以 manifest 形式发布到市场，但执行逻辑在客户端二进制内。
+  /// - 'function'：用户通过函数编辑器将一个函数发布为插件。函数 IR
+  ///   （[FunctionDef] 的 JSON）嵌入在 [functionDef] 字段中，
+  ///   运行时由 [FunctionPluginExecutor] 解释执行。函数插件相比项目
+  ///   内函数有限制：禁用项目变量、数据库、UI 控制、定时器/外部触发器
+  ///   等依赖项目上下文的节点。
+  /// - 'ui_component'：UI 组件插件，向 UI 编辑器注册一个新组件类型。
+  ///   组件元数据 / 属性 / 事件 / 渲染函数 IR 嵌入在 [uiComponent] 字段中。
+  ///   不参与节点编辑页的插件调用（无 PluginExecutor），仅扩展 UI 编辑器。
+  ///
+  /// 默认 'http' 以兼容旧 manifest（无此字段时按 HTTP 处理）。
+  final String executorType;
+
+  /// 函数执行器定义（仅 [executorType] == 'function' 时有效）。
+  ///
+  /// 携带嵌入的 [FunctionDef] JSON（包含节点图、控制流边、函数变量、
+  /// 入参/出参签名等）。运行时 [FunctionPluginExecutor] 通过
+  /// `FunctionDef.fromJson` 还原函数 IR 并用 [NodeInterpreter] 执行。
+  ///
+  /// 对于非 function 类型插件，此字段为 null。
+  final FunctionExecutorDef? functionDef;
+
+  /// UI 组件定义（仅 [executorType] == 'ui_component' 时有效）。
+  ///
+  /// 描述插件向 UI 编辑器注册的组件类型：元数据（type / 显示名 / 分类 /
+  /// 图标 / 是否可容纳子节点）、属性 schema、触发事件列表、渲染函数 IR。
+  /// 安装时由 [InstalledPluginsNotifier._registerOne] 转交
+  /// [ComponentRegistry] 注册；UI 编辑器从注册表读取该组件以扩展
+  /// 组件面板、属性面板、画布渲染。
+  ///
+  /// 对于非 ui_component 类型插件，此字段为 null。
+  final UiComponentDef? uiComponent;
 
   /// 安装来源仓库 URL。
   final String sourceRepoUrl;
@@ -56,6 +98,9 @@ class PluginManifest {
     required this.outputs,
     required this.configSchema,
     required this.executor,
+    this.executorType = 'http',
+    this.functionDef,
+    this.uiComponent,
     required this.sourceRepoUrl,
     required this.installedAt,
   });
@@ -83,6 +128,15 @@ class PluginManifest {
       executor: HttpExecutorDef.fromJson(
         (json['executor'] as Map<String, dynamic>?) ?? const {},
       ),
+      executorType: (json['executorType'] as String?) ?? 'http',
+      functionDef: (json['functionDef'] as Map<String, dynamic>?) != null
+          ? FunctionExecutorDef.fromJson(
+              json['functionDef'] as Map<String, dynamic>)
+          : null,
+      uiComponent: (json['uiComponent'] as Map<String, dynamic>?) != null
+          ? UiComponentDef.fromJson(
+              json['uiComponent'] as Map<String, dynamic>)
+          : null,
       sourceRepoUrl: (json['sourceRepoUrl'] as String?) ?? '',
       installedAt: (json['installedAt'] as String?) ?? '',
     );
@@ -107,9 +161,21 @@ class PluginManifest {
         'outputs': outputs.map((e) => e.toJson()).toList(),
         'configSchema': configSchema.map((e) => e.toJson()).toList(),
         'executor': executor.toJson(),
+        'executorType': executorType,
+        if (functionDef != null) 'functionDef': functionDef!.toJson(),
+        if (uiComponent != null) 'uiComponent': uiComponent!.toJson(),
         'sourceRepoUrl': sourceRepoUrl,
         'installedAt': installedAt,
       };
+
+  /// 是否为 native 执行器类型。
+  bool get isNativeExecutor => executorType == 'native';
+
+  /// 是否为 function 执行器类型（用户发布的函数插件）。
+  bool get isFunctionExecutor => executorType == 'function';
+
+  /// 是否为 UI 组件插件类型（向 UI 编辑器注册新组件）。
+  bool get isUiComponent => executorType == 'ui_component';
 
   /// 转为 [PluginSpec]，用于注册到 [PluginRegistry]。
   PluginSpec toPluginSpec() {
@@ -296,4 +362,31 @@ class HttpExecutorDef {
         'responseMapping': responseMapping,
         'timeoutMs': timeoutMs,
       };
+}
+
+/// 函数执行器定义。
+///
+/// 携带用户通过函数编辑器发布的函数 IR（[FunctionDef] 的 JSON 快照）。
+/// 仅当 [PluginManifest.executorType] == 'function' 时使用。
+///
+/// 运行时 [FunctionPluginExecutor] 通过 `FunctionDef.fromJson(function)`
+/// 还原函数定义，构造一个最小化的 [Project]（仅含该函数），再用
+/// [NodeInterpreter] 解释执行。
+class FunctionExecutorDef {
+  /// 函数 IR 快照（[FunctionDef.toJson] 的输出）。
+  ///
+  /// 包含函数的节点图、控制流边、函数变量、入参/出参签名等完整信息。
+  /// 不含项目级数据（项目变量、数据库、UI 树等），因为函数插件
+  /// 禁用这些依赖项目上下文的节点。
+  final Map<String, dynamic> function;
+
+  const FunctionExecutorDef({required this.function});
+
+  factory FunctionExecutorDef.fromJson(Map<String, dynamic> json) {
+    return FunctionExecutorDef(
+      function: (json['function'] as Map<String, dynamic>?) ?? const {},
+    );
+  }
+
+  Map<String, dynamic> toJson() => {'function': function};
 }

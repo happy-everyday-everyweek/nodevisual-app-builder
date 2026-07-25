@@ -146,6 +146,14 @@ class _NodeEditorBody extends ConsumerWidget {
       child: ListView(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
         children: [
+          // 节点注释编辑区（顶部，所有节点都可编辑）。
+          _AnnotationEditorCard(
+            node: node,
+            onChanged: (v) => ref
+                .read(graphMutatorProvider.notifier)
+                .updateNode(nodeId, annotation: v),
+          ),
+          const SizedBox(height: 20),
           if (spec == null) _buildUnsupportedNote(theme),
           if (spec != null) ...[
             // 插件配置入口（仅 plugin 类节点显示，最小侵入，不影响 # 引用）。
@@ -1523,6 +1531,102 @@ class _SectionTitle extends StatelessWidget {
             color: Theme.of(context).colorScheme.primary,
             fontWeight: FontWeight.w700,
           ),
+    );
+  }
+}
+
+/// 节点注释编辑卡片。
+///
+/// 用户可为节点编写简短说明（会显示在画布节点卡片头部下方）。空字符串
+/// 表示无注释，画布上不显示注释行。变更通过 [onChanged] 实时提交到
+/// [GraphMutator.updateNode]，与节点参数编辑保持同一提交流。
+class _AnnotationEditorCard extends StatefulWidget {
+  const _AnnotationEditorCard({required this.node, required this.onChanged});
+
+  final Node node;
+  final ValueChanged<String> onChanged;
+
+  @override
+  State<_AnnotationEditorCard> createState() => _AnnotationEditorCardState();
+}
+
+class _AnnotationEditorCardState extends State<_AnnotationEditorCard> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.node.annotation);
+  }
+
+  @override
+  void didUpdateWidget(covariant _AnnotationEditorCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 外部（如撤销/重做）变更 annotation 时同步到输入框，避免覆盖用户输入：
+    // 仅在文本不一致且输入框未获焦时同步。
+    if (_controller.text != widget.node.annotation &&
+        Focus.of(context).hasFocus == false) {
+      _controller.text = widget.node.annotation;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.notes,
+                    size: 18, color: theme.colorScheme.primary),
+                const SizedBox(width: 6),
+                Text('注释', style: theme.textTheme.titleSmall),
+                const Spacer(),
+                if (_controller.text.isNotEmpty)
+                  IconButton(
+                    tooltip: '清除注释',
+                    icon: const Icon(Icons.close, size: 18),
+                    onPressed: () {
+                      _controller.clear();
+                      widget.onChanged('');
+                    },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '为节点写一句简短说明（可选），会显示在画布节点名称下方。',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _controller,
+              maxLines: 2,
+              minLines: 1,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: const InputDecoration(
+                isDense: true,
+                hintText: '如：检查用户是否已登录',
+                border: OutlineInputBorder(),
+                alignLabelWithHint: true,
+              ),
+              onChanged: widget.onChanged,
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

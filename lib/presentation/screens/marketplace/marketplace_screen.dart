@@ -1,19 +1,27 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/constants.dart';
 import '../../../features/marketplace/marketplace_entry.dart';
 import '../../../features/marketplace/marketplace_providers.dart';
 import '../../../features/marketplace/plugin_manifest.dart';
+import '../../../features/marketplace/project_marketplace_entry.dart';
 import '../../../features/plugins/plugin_config_storage.dart';
 import '../../../features/plugins/plugin_registry.dart';
 import '../../../features/plugins/plugin_spec.dart';
 
-/// 插件市场屏幕：浏览 / 搜索 / 安装 / 卸载 / 配置。
+/// 市场屏幕：浏览 / 搜索 / 安装插件、克隆项目、管理已安装插件。
 ///
-/// 两个 Tab：
-/// - 市场浏览：从远程 index.json 拉取可安装插件列表。
-/// - 已安装：本地已安装插件列表，支持配置与卸载。
+/// 三个 Tab（悬浮胶囊状切换）：
+/// - **插件**：从远程 index.json 拉取可安装插件列表（含内置 AI 插件）。
+/// - **项目**：从远程 projects.json 拉取用户发布的项目，可克隆到本地。
+/// - **已安装**：本地已安装插件列表，支持配置与卸载。
+///
+/// 顶部胶囊 Tab 设计与 [CapsuleTopBar] 一致（glassmorphism + 柔和投影），
+/// 让 Tab 切换有"悬浮"在内容之上的层次感。
 class MarketplaceScreen extends ConsumerStatefulWidget {
   const MarketplaceScreen({super.key});
 
@@ -22,7 +30,7 @@ class MarketplaceScreen extends ConsumerStatefulWidget {
 }
 
 class _MarketplaceScreenState extends ConsumerState<MarketplaceScreen>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late final TabController _tabController;
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -30,7 +38,7 @@ class _MarketplaceScreenState extends ConsumerState<MarketplaceScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
   }
 
   @override
@@ -49,20 +57,14 @@ class _MarketplaceScreenState extends ConsumerState<MarketplaceScreen>
           icon: const Icon(Icons.arrow_back),
           onPressed: () => context.pop(),
         ),
-        title: const Text('插件市场'),
-        bottom: TabBar(
-          controller: _tabController,
-          tabs: const [
-            Tab(icon: Icon(Icons.storefront_outlined), text: '浏览'),
-            Tab(icon: Icon(Icons.download_done_outlined), text: '已安装'),
-          ],
-        ),
+        title: const Text('市场'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: '刷新',
             onPressed: () {
               ref.invalidate(marketplaceIndexProvider);
+              ref.invalidate(projectMarketplaceIndexProvider);
               ref.read(installedPluginsProvider.notifier).refresh();
             },
           ),
@@ -72,14 +74,17 @@ class _MarketplaceScreenState extends ConsumerState<MarketplaceScreen>
         bottom: false,
         child: Column(
           children: [
+            // 悬浮胶囊状 Tab 切换。
+            _CapsuleTabBar(controller: _tabController),
+            const SizedBox(height: 8),
             // 搜索栏
             Padding(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
               child: TextField(
                 controller: _searchController,
                 decoration: InputDecoration(
                   isDense: true,
-                  hintText: '搜索插件…',
+                  hintText: _searchHint(),
                   prefixIcon: const Icon(Icons.search, size: 20),
                   suffixIcon: _searchQuery.isEmpty
                       ? null
@@ -95,11 +100,13 @@ class _MarketplaceScreenState extends ConsumerState<MarketplaceScreen>
                 onChanged: (v) => setState(() => _searchQuery = v.trim()),
               ),
             ),
+            const SizedBox(height: 8),
             Expanded(
               child: TabBarView(
                 controller: _tabController,
                 children: [
-                  _BrowseTab(searchQuery: _searchQuery),
+                  _PluginsTab(searchQuery: _searchQuery),
+                  _ProjectsTab(searchQuery: _searchQuery),
                   _InstalledTab(searchQuery: _searchQuery),
                 ],
               ),
@@ -109,14 +116,169 @@ class _MarketplaceScreenState extends ConsumerState<MarketplaceScreen>
       ),
     );
   }
+
+  /// 根据当前 Tab 显示不同的搜索提示。
+  String _searchHint() {
+    switch (_tabController.index) {
+      case 1:
+        return '搜索项目…';
+      case 2:
+        return '搜索已安装插件…';
+      default:
+        return '搜索插件…';
+    }
+  }
 }
 
 // ============================================================================
-// 浏览 Tab
+// 悬浮胶囊状 Tab 栏
 // ============================================================================
 
-class _BrowseTab extends ConsumerWidget {
-  const _BrowseTab({required this.searchQuery});
+/// 三栏胶囊状 Tab 栏（插件 / 项目 / 已安装）。
+///
+/// 视觉与 [CapsuleTopBar] 一致：圆角胶囊 + 半透明背景 + 背景模糊
+/// （glassmorphism）+ 柔和投影，让 Tab "浮"在内容之上。
+/// 选中段填充主色高亮，未选中段透明，切换动画与 CapsuleTopBar 一致。
+class _CapsuleTabBar extends StatelessWidget {
+  const _CapsuleTabBar({required this.controller});
+
+  final TabController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Center(
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(28),
+            border: Border.all(color: cs.outlineVariant, width: 0.75),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.08),
+                blurRadius: 12,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(28),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+              child: Container(
+                height: 56,
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: cs.surface.withValues(alpha: 0.95),
+                  borderRadius: BorderRadius.circular(28),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _CapsuleTabButton(
+                      controller: controller,
+                      index: 0,
+                      label: '插件',
+                      icon: Icons.storefront_outlined,
+                    ),
+                    _CapsuleTabButton(
+                      controller: controller,
+                      index: 1,
+                      label: '项目',
+                      icon: Icons.folder_outlined,
+                    ),
+                    _CapsuleTabButton(
+                      controller: controller,
+                      index: 2,
+                      label: '已安装',
+                      icon: Icons.download_done_outlined,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CapsuleTabButton extends StatelessWidget {
+  const _CapsuleTabButton({
+    required this.controller,
+    required this.index,
+    required this.label,
+    required this.icon,
+  });
+
+  final TabController controller;
+  final int index;
+  final String label;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final selected = controller.index == index;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () => controller.animateTo(index),
+        borderRadius: BorderRadius.circular(24),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 260),
+          curve: selected ? Curves.easeOutCubic : Curves.easeInCubic,
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+          decoration: BoxDecoration(
+            color: selected ? cs.primary : Colors.transparent,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TweenAnimationBuilder<double>(
+                tween: Tween<double>(
+                  begin: selected ? 1.0 : 1.06,
+                  end: selected ? 1.06 : 1.0,
+                ),
+                duration: const Duration(milliseconds: 220),
+                curve: selected ? Curves.easeOutCubic : Curves.easeInCubic,
+                builder: (ctx, scale, child) {
+                  return Transform.scale(scale: scale, child: child);
+                },
+                child: Icon(
+                  icon,
+                  size: 18,
+                  color: selected ? cs.onPrimary : cs.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                  color: selected ? cs.onPrimary : cs.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// 插件 Tab
+// ============================================================================
+
+class _PluginsTab extends ConsumerWidget {
+  const _PluginsTab({required this.searchQuery});
 
   final String searchQuery;
 
@@ -128,7 +290,7 @@ class _BrowseTab extends ConsumerWidget {
     return asyncIndex.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (e, _) => _ErrorView(
-        message: '无法加载插件市场索引\n$e',
+        message: '无法加载市场索引\n$e',
         onRetry: () => ref.invalidate(marketplaceIndexProvider),
       ),
       data: (index) {
@@ -165,6 +327,89 @@ class _BrowseTab extends ConsumerWidget {
             return _PluginCard(
               entry: entry,
               isInstalled: isInstalled,
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+// ============================================================================
+// 项目 Tab
+// ============================================================================
+
+class _ProjectsTab extends ConsumerWidget {
+  const _ProjectsTab({required this.searchQuery});
+
+  final String searchQuery;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final asyncIndex = ref.watch(projectMarketplaceIndexProvider);
+    final cloneState = ref.watch(cloneProjectProvider);
+
+    // 监听克隆成功，跳转到项目编辑器。
+    ref.listen<CloneProjectState>(cloneProjectProvider, (_, state) {
+      if (state is CloneProjectDone) {
+        // 重置状态后跳转。
+        ref.read(cloneProjectProvider.notifier).reset();
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('已克隆项目「${state.projectName}」到本地')),
+          );
+          context.push(AppConstants.projectRoute(state.projectId));
+        }
+      } else if (state is CloneProjectError) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(state.message)),
+          );
+        }
+        ref.read(cloneProjectProvider.notifier).reset();
+      }
+    });
+
+    return asyncIndex.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => _ErrorView(
+        message: '无法加载项目市场索引\n$e',
+        onRetry: () => ref.invalidate(projectMarketplaceIndexProvider),
+      ),
+      data: (index) {
+        var projects = index.projects;
+        if (searchQuery.isNotEmpty) {
+          final q = searchQuery.toLowerCase();
+          projects = projects
+              .where((p) =>
+                  p.name.toLowerCase().contains(q) ||
+                  p.description.toLowerCase().contains(q) ||
+                  p.tags.any((t) => t.toLowerCase().contains(q)))
+              .toList();
+        }
+
+        if (projects.isEmpty) {
+          return _EmptyState(
+            icon: Icons.folder_off_outlined,
+            message: searchQuery.isEmpty ? '市场暂无项目' : '无匹配项目',
+          );
+        }
+
+        final cloning = cloneState is CloneProjectRunning
+            ? (cloneState as CloneProjectRunning).entryName
+            : null;
+
+        return ListView.separated(
+          padding: const EdgeInsets.fromLTRB(12, 4, 12, 32),
+          itemCount: projects.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 8),
+          itemBuilder: (context, i) {
+            final entry = projects[i];
+            return _ProjectCard(
+              entry: entry,
+              isCloning: cloning == entry.name,
+              onClone: () =>
+                  ref.read(cloneProjectProvider.notifier).clone(entry),
             );
           },
         );
@@ -312,6 +557,226 @@ class _PluginCard extends ConsumerWidget {
     );
   }
 }
+
+// ============================================================================
+// 项目卡片
+// ============================================================================
+
+class _ProjectCard extends StatelessWidget {
+  const _ProjectCard({
+    required this.entry,
+    required this.isCloning,
+    required this.onClone,
+  });
+
+  final ProjectMarketplaceEntry entry;
+  final bool isCloning;
+  final VoidCallback onClone;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: InkWell(
+        onTap: () => _showDetail(context),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              _ProjectIcon(iconName: entry.icon),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            entry.name,
+                            style: theme.textTheme.titleSmall,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Text(
+                          'v${entry.version}',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      entry.description.isEmpty ? '（无描述）' : entry.description,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Icon(Icons.person_outline,
+                            size: 12, color: theme.colorScheme.outline),
+                        const SizedBox(width: 2),
+                        Text(
+                          entry.author,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.outline,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Icon(Icons.star_outline,
+                            size: 12, color: theme.colorScheme.outline),
+                        const SizedBox(width: 2),
+                        Text(
+                          '${entry.stars}',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.outline,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (entry.tags.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 4,
+                        runSpacing: 4,
+                        children: entry.tags
+                            .take(4)
+                            .map((t) => _TagChip(label: t))
+                            .toList(),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              _CloneButton(isCloning: isCloning, onClone: onClone),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showDetail(BuildContext context) {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) => _ProjectDetailSheet(entry: entry),
+    );
+  }
+}
+
+class _CloneButton extends StatelessWidget {
+  const _CloneButton({required this.isCloning, required this.onClone});
+
+  final bool isCloning;
+  final VoidCallback onClone;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    if (isCloning) {
+      return const SizedBox(
+        width: 28,
+        height: 28,
+        child: Padding(
+          padding: EdgeInsets.all(2),
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      );
+    }
+    return IconButton(
+      onPressed: onClone,
+      icon: const Icon(Icons.download_for_offline_outlined, size: 20),
+      padding: EdgeInsets.zero,
+      splashRadius: 16,
+      tooltip: '克隆到本地',
+      style: IconButton.styleFrom(
+        backgroundColor: cs.primaryContainer,
+        foregroundColor: cs.primary,
+      ),
+    );
+  }
+}
+
+class _ProjectDetailSheet extends StatelessWidget {
+  const _ProjectDetailSheet({required this.entry});
+
+  final ProjectMarketplaceEntry entry;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: _ProjectIcon(iconName: entry.icon, size: 48),
+            ),
+            const SizedBox(height: 12),
+            Center(
+              child: Text(entry.name, style: theme.textTheme.titleLarge),
+            ),
+            const SizedBox(height: 4),
+            Center(
+              child: Text(
+                'v${entry.version} · ${entry.author}',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              entry.description.isEmpty ? '（无描述）' : entry.description,
+              style: theme.textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 12),
+            if (entry.tags.isNotEmpty) ...[
+              Text('标签', style: theme.textTheme.labelMedium),
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: entry.tags.map((t) => _TagChip(label: t)).toList(),
+              ),
+              const SizedBox(height: 12),
+            ],
+            _InfoRow(
+              icon: Icons.source_outlined,
+              label: '源仓库',
+              value: entry.repoUrl,
+            ),
+            const SizedBox(height: 12),
+            Text(
+              '克隆到本地后可作为自己项目的起点，自由编辑与发布。\n'
+              '项目 IR（ir.json）会从源仓库 main 分支下载并导入。',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================================================================
+// 已安装插件卡片
+// ============================================================================
 
 class _InstalledPluginCard extends ConsumerWidget {
   const _InstalledPluginCard({required this.manifest});
@@ -611,7 +1076,7 @@ class _PluginDetailSheet extends ConsumerWidget {
             ),
             const SizedBox(height: 12),
             Text('安装后可在此应用中创建该插件节点并配置参数。'
-                '插件通过 HTTP 请求模板执行，无需动态代码。',
+                '插件通过 HTTP 请求模板或内置原生执行器执行。',
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 )),
@@ -833,6 +1298,49 @@ class _PluginIcon extends StatelessWidget {
         return Icons.image_outlined;
       default:
         return Icons.extension;
+    }
+  }
+}
+
+class _ProjectIcon extends StatelessWidget {
+  const _ProjectIcon({required this.iconName, this.size = 36});
+
+  final String iconName;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Icon(
+        _iconData(iconName),
+        size: size * 0.55,
+        color: theme.colorScheme.onSecondaryContainer,
+      ),
+    );
+  }
+
+  IconData _iconData(String name) {
+    switch (name) {
+      case 'game':
+        return Icons.sports_esports_outlined;
+      case 'tool':
+        return Icons.build_outlined;
+      case 'social':
+        return Icons.people_outline;
+      case 'education':
+        return Icons.school_outlined;
+      case 'business':
+        return Icons.business_center_outlined;
+      case 'folder':
+      default:
+        return Icons.folder_outlined;
     }
   }
 }

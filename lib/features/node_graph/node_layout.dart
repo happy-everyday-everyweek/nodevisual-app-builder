@@ -9,6 +9,17 @@ import 'dart:ui';
 ///
 /// 改动任一值需同步三者。
 ///
+/// **节点显示简化**：节点卡片只渲染头部（图标+名称+关联标签+删除）+
+/// 可选注释行。不再渲染控制流输出行 / 数据输出行（节点系统已统一为
+/// 单输入单输出，多输出由子母节点表达）。
+///
+/// **端口位置**：
+/// - 入口端口：头部左侧中点 `Offset(0, headerHeight/2)`。
+/// - 单输出端口（含 `branch` 子节点）：头部右侧中点 `Offset(width, headerHeight/2)`。
+/// - 母节点（`controlOutputs.length >= 2` 且非 `branch`）的多输出端口：
+///   头部底部中央 `Offset(width/2, headerHeight + annotationHeight)`，
+///   多个端口共用同一位置，连线自然向下方各 `branch` 子节点分散。
+///
 /// **连线交互**：采用两步点击式（先点起始节点，再点终止节点），
 /// 无端口圆点。连线仅表达执行顺序，与参数传递无关。
 class NodeLayout {
@@ -20,11 +31,8 @@ class NodeLayout {
   /// 节点头部高度（标题所在行）。
   static const double headerHeight = 36;
 
-  /// 单个控制流输出端口行高度。
-  static const double outputRowHeight = 24;
-
-  /// 单个数据输出展示行高度。
-  static const double dataRowHeight = 20;
+  /// 注释行高度（节点有 annotation 时显示在头部下方）。
+  static const double annotationRowHeight = 18;
 
   /// 控制流连线粗细。
   static const double connectionStrokeWidth = 3;
@@ -33,23 +41,28 @@ class NodeLayout {
   static const double edgeHitThreshold = 14;
 
   /// 计算节点入口端口（"in"）相对节点左上角的偏移。
-  static Offset inputPortOffset() =>
-      const Offset(0, headerHeight / 2);
+  static Offset inputPortOffset() => const Offset(0, headerHeight / 2);
 
-  /// 计算第 [index] 个控制流输出端口相对节点左上角的偏移。
-  static Offset outputPortOffset(int index) =>
-      Offset(width, headerHeight + index * outputRowHeight + outputRowHeight / 2);
+  /// 计算单输出节点（含 `branch` 子节点）的输出端口相对节点左上角的偏移。
+  ///
+  /// 单输出节点的唯一控制流输出（通常为 `next`）位于头部右侧中点，
+  /// 与入口端口对称。
+  static Offset singleOutputPortOffset() =>
+      const Offset(width, headerHeight / 2);
 
-  /// 计算节点卡片高度（基于控制流输出 + 数据输出数量）。
-  static double nodeHeight({
-    required int controlOutputCount,
-    required int dataOutputCount,
-  }) {
-    var h = headerHeight + controlOutputCount * outputRowHeight;
-    if (dataOutputCount > 0) {
-      h += 1 + dataOutputCount * dataRowHeight; // 1px 分割线
-    }
-    return h;
+  /// 计算母节点（多输出）的输出端口相对节点左上角的偏移。
+  ///
+  /// 母节点的所有控制流输出端口共用底部中央位置，连线自然向下方
+  /// 各 `branch` 子节点分散。[annotationHeight] 为注释行高度（无注释传 0）。
+  static Offset multiOutputPortOffset(double annotationHeight) =>
+      Offset(width / 2, headerHeight + annotationHeight);
+
+  /// 计算节点卡片高度（基于是否有注释）。
+  ///
+  /// 简化后节点高度仅由头部 + 可选注释行决定，不再受控制流/数据输出
+  /// 数量影响（这些行不再渲染）。
+  static double nodeHeight({bool hasAnnotation = false}) {
+    return headerHeight + (hasAnnotation ? annotationRowHeight : 0);
   }
 }
 

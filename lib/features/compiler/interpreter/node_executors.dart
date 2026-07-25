@@ -3,6 +3,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, TargetPlatform;
 import 'package:flutter_js/flutter_js.dart';
+import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../data/models/control_edge.dart';
 import '../../../data/models/db_schema.dart';
@@ -312,17 +314,20 @@ Future<NodeExecResult> executeNode(ExecContext ctx) async {
       return _execUiShowToast(ctx);
 
     // ---- 内置插件 ----
-    case 'plugin_openai':
-      return _execPlugin(ctx, 'llm_openai');
-    case 'plugin_anthropic':
-      return _execPlugin(ctx, 'llm_anthropic');
-    // 原生能力插件（通过插件形式发布的各端原生能力）
+    // 注意：OpenAI / Anthropic 已迁移到市场，不再有专用 case 分支。
+    // 它们安装后通过通用 plugin_<id> 流程执行（见 default 分支）。
     case 'plugin_clipboard':
       return _execPlugin(ctx, 'native_clipboard');
     case 'plugin_haptic':
       return _execPlugin(ctx, 'native_haptic');
     case 'plugin_share':
       return _execPlugin(ctx, 'native_share');
+
+    // ---- 网络请求 / 打开链接 ----
+    case 'http_request':
+      return _execHttpRequest(ctx);
+    case 'open_link':
+      return _execOpenLink(ctx);
 
     default:
       // 市场插件节点（kind = plugin_<id>）：提取 pluginId 并执行。
@@ -1240,6 +1245,165 @@ Future<NodeExecResult> _execPlugin(ExecContext ctx, String pluginId) async {
     dataOutputs: outputs,
     nextControlOutput: 'next',
   );
+}
+
+// ===========================================================================
+// 网络请求 / 打开链接 节点
+// ===========================================================================
+
+/// http_request：通用 HTTP 请求节点。
+///
+/// 节点参数：
+/// - [method]：请求方法 GET/POST/PUT/DELETE/PATCH。
+/// - [url]：请求 URL（支持 `#` 引用）。
+/// - [headers]：请求头 Map（支持 `#` 引用）。
+/// - [body]：请求体字符串（POST/PUT/PATCH 有效，支持 `#` 引用）。
+/// - [timeoutMs]：超时毫秒，默认 30000。
+///
+/// 数据输出：
+/// - status：HTTP 状态码（number）。
+/// - body：响应体字符串（string）。
+/// - headers：响应头 Map（map）。
+///
+/// 异常（超时 / 网络错误 / URL 无效）由调用方捕获并记录到 RunResult.error。
+Future<NodeExecResult> _execHttpRequest(ExecContext ctx) async {
+  final params = ctx.node.params;
+  final method = (params['method']?.toString() ?? 'GET').toUpperCase();
+  final url = resolveRef(params['url'], ctx.scope)?.toString() ?? '';
+  if (url.isEmpty) {
+    throw StateError('http_request 未指定 url');
+  }
+  final headers = _toMap(resolveRef(params['headers'], ctx.scope))
+      .map((k, v) => MapEntry(k.toString(), v?.toString() ?? ''));
+  final body = resolveRef(params['body'], ctx.scope)?.toString();
+  final timeoutMs = _toInt(resolveRef(params['timeoutMs'], ctx.scope));
+  final timeout = Duration(milliseconds: timeoutMs > 0 ? timeoutMs : 30000);
+
+  final uri = Uri.tryParse(url);
+  if (uri == null) {
+    throw StateError('http_request 无效的 URL: $url');
+  }
+
+  http.Response response;
+  try {
+    switch (method) {
+      case 'GET':
+        response = await http
+            .get(uri, headers: headers)
+            .timeout(timeout);
+      case 'POST':
+        response = await http
+            .post(uri, headers: headers, body: body)
+            .timeout(timeout);
+      case 'PUT':
+        response = await http
+            .put(uri, headers: headers, body: body)
+            .timeout(timeout);
+      case 'DELETE':
+        response = await http
+            .delete(uri, headers: headers, body: body)
+            .timeout(timeout);
+      case 'PATCH':
+        response = await http
+            .patch(uri, headers: headers, body: body)
+            .timeout(timeout);
+      default:
+        throw StateError('http_request 不支持的请求方法: $method');
+    }
+  } catch (e) {
+    throw StateError('http_request 请求失败: $e');
+  }
+
+  final respHeaders = <String, String>{};
+  response.headers.forEach((k, v) => respHeaders[k] = v);
+
+  return NodeExecResult(
+    dataOutputs: {
+      'status': response.statusCode,
+      'body': response.body,
+      'headers': respHeaders,
+    },
+    nextControlOutput: 'next',
+  );
+}
+
+/// open_link：根据 [link] 协议前缀自动选择打开方式。
+///
+/// 协议支持：
+/// - `http://` / `https://`：浏览器打开网页（全平台）。
+/// - `file:///sdcard/...`：打开本地文件（仅 Android，需文件访问权限）。
+/// - `intent://...;end` / `intent:...;end`：以 Android Intent 机制打开（仅 Android）。
+/// - `<scheme>://`：应用链接，打开指定应用页面（仅 Android，部分 scheme 仅 Android 可用）。
+///
+/// 部分协议仅在 Android 端可用，详见节点描述。
+/// 数据输出：ok（boolean）表示是否成功唤起。
+Future<NodeExecResult> _execOpenLink(ExecContext ctx) async {
+  final params = ctx.node.params;
+  final link = resolveRef(params['link'], ctx.scope)?.toString() ?? '';
+  if (link.isEmpty) {
+    throw StateError('open_link 未指定 link');
+  }
+
+  // 当前运行平台（kIsWeb 优先判断，避免 Web 端误用 defaultTargetPlatform）。
+  final isAndroid = !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+
+  // 按协议前缀路由。
+  // 1) http/https：浏览器打开（全平台）。
+  if (link.startsWith('http://') || link.startsWith('https://')) {
+    final ok = await _tryLaunchUrl(Uri.parse(link));
+    return _ok({'ok': ok});
+  }
+  // 2) file:// 本地文件路径：仅 Android（其他平台返回 false）。
+  if (link.startsWith('file://')) {
+    if (!isAndroid) {
+      return _ok({'ok': false});
+    }
+    final ok = await _tryLaunchUrl(Uri.parse(link));
+    return _ok({'ok': ok});
+  }
+  // 3) Android Intent 协议（intent://...;end 或 intent:...;end）：
+  //    仅 Android 平台以系统 Intent 机制打开。
+  if (link.startsWith('intent://') || link.startsWith('intent:')) {
+    if (!isAndroid) {
+      return _ok({'ok': false});
+    }
+    final ok = await _tryLaunchUrl(Uri.parse(link));
+    return _ok({'ok': ok});
+  }
+  // 4) 应用链接（scheme://）：仅 Android 可靠支持（部分 scheme 在其他平台无效）。
+  //    形如 myapp://page/detail。
+  if (_hasCustomScheme(link)) {
+    if (!isAndroid) {
+      return _ok({'ok': false});
+    }
+    final ok = await _tryLaunchUrl(Uri.parse(link));
+    return _ok({'ok': ok});
+  }
+  // 5) 兜底：尝试直接以 url_launcher 打开（适用于纯路径或其他 scheme）。
+  final ok = await _tryLaunchUrl(Uri.parse(link));
+  return _ok({'ok': ok});
+}
+
+/// 判断字符串是否含有自定义 scheme（非 http/https/file/intent 的 xxx:// 形式）。
+bool _hasCustomScheme(String link) {
+  final idx = link.indexOf('://');
+  if (idx <= 0) return false;
+  final scheme = link.substring(0, idx).toLowerCase();
+  return scheme != 'http' &&
+      scheme != 'https' &&
+      scheme != 'file' &&
+      scheme != 'intent';
+}
+
+/// 封装 url_launcher 调用，处理异常与平台兼容。
+Future<bool> _tryLaunchUrl(Uri uri) async {
+  try {
+    // launchUrl 默认 mode 为 LaunchMode.platformDefault，
+    // Android 上可触发 Intent / scheme / 浏览器 / 文件打开。
+    return await launchUrl(uri);
+  } catch (_) {
+    return false;
+  }
 }
 
 // ===========================================================================
