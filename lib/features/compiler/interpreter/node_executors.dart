@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, TargetPlatform;
-import 'package:flutter_js/flutter_js.dart';
 import 'package:http/http.dart' as http;
 import 'package:url_launcher/url_launcher.dart';
 
@@ -15,6 +14,7 @@ import '../../../data/models/variable_ref.dart';
 import '../../plugins/plugin_config_storage.dart';
 import '../../plugins/plugin_registry.dart';
 import 'database_executor.dart';
+import 'js_runtime.dart';
 import 'runtime_scope.dart';
 import 'runtime_ui_state.dart';
 
@@ -416,12 +416,12 @@ Future<NodeExecResult> _execCodeRun(ExecContext ctx) async {
     inputsMap = {};
   }
 
-  final runtime = getJavascriptRuntime();
+  final runtime = createJsRuntime();
   try {
-    // 注入 inputs 全局变量。
-    runtime.evaluate('var inputs = ${jsonEncode(inputsMap)};');
-    final result = runtime.evaluate(code);
-    // flutter_js 的 evaluate 返回 JsEvalResult；rawResult 将 JS undefined 映射为 null。
+    // 注入 inputs 全局变量并执行用户代码。合并为一次 evaluate 以兼容 IO 与 Web
+    // 两种运行时（Web 的 Function 构造器每次在局部作用域执行，不保留状态）。
+    final result = runtime.evaluate('var inputs = ${jsonEncode(inputsMap)};\n$code');
+    // [JsRuntimeResult.rawResult] 将 JS undefined 映射为 null。
     final raw = result.rawResult;
     return NodeExecResult(
       nextControlOutput: 'next',
