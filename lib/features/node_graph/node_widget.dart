@@ -338,6 +338,8 @@ class _NodeCardState extends State<NodeCard>
       case 'variable_set':
       case 'variable_get':
         return Icons.label_outline;
+      case 'device_var':
+        return Icons.devices_outlined;
       case 'arithmetic':
         return Icons.calculate_outlined;
       case 'logic':
@@ -346,6 +348,8 @@ class _NodeCardState extends State<NodeCard>
         return Icons.text_fields;
       case 'if':
         return Icons.call_split;
+      case 'if_branch':
+        return Icons.subdirectory_arrow_right;
       case 'loop':
         return Icons.loop;
       case 'db_query':
@@ -357,6 +361,14 @@ class _NodeCardState extends State<NodeCard>
         return Icons.functions;
       case 'plugin':
         return Icons.extension;
+      case 'plugin_clipboard':
+        return Icons.content_copy;
+      case 'plugin_haptic':
+        return Icons.vibration;
+      case 'plugin_share':
+        return Icons.share;
+      case 'code_run':
+        return Icons.code;
       default:
         return Icons.widgets_outlined;
     }

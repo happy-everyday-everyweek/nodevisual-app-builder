@@ -1,6 +1,9 @@
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, TargetPlatform;
+import 'package:flutter_js/flutter_js.dart';
+
 import '../../../data/models/control_edge.dart';
 import '../../../data/models/db_schema.dart';
 import '../../../data/models/function_def.dart';
@@ -186,6 +189,12 @@ Future<NodeExecResult> executeNode(ExecContext ctx) async {
     // ---- 变量 ----
     case 'variable_set':
       return _execVariableSet(ctx);
+    case 'device_var':
+      return _execDeviceVar(ctx);
+
+    // ---- 代码运行 ----
+    case 'code_run':
+      return _execCodeRun(ctx);
 
     // ---- 运算 ----
     case 'arithmetic':
@@ -212,6 +221,9 @@ Future<NodeExecResult> executeNode(ExecContext ctx) async {
     // ---- 流程控制 ----
     case 'if':
       return _execIf(ctx);
+    case 'if_branch':
+      // 子母节点设计的子节点：纯控制流传递，走 next 输出（无数据产出）。
+      return const NodeExecResult(nextControlOutput: 'next');
     case 'loop':
       return _execLoop(ctx);
     case 'return':
@@ -260,6 +272,13 @@ Future<NodeExecResult> executeNode(ExecContext ctx) async {
       return _execPlugin(ctx, 'llm_openai');
     case 'plugin_anthropic':
       return _execPlugin(ctx, 'llm_anthropic');
+    // 原生能力插件（通过插件形式发布的各端原生能力）
+    case 'plugin_clipboard':
+      return _execPlugin(ctx, 'native_clipboard');
+    case 'plugin_haptic':
+      return _execPlugin(ctx, 'native_haptic');
+    case 'plugin_share':
+      return _execPlugin(ctx, 'native_share');
 
     default:
       // 市场插件节点（kind = plugin_<id>）：提取 pluginId 并执行。
@@ -292,6 +311,104 @@ Future<NodeExecResult> _execVariableSet(ExecContext ctx) async {
     }
   }
   return const NodeExecResult(nextControlOutput: 'next');
+}
+
+/// device_var：读取设备只读属性。
+///
+/// [property] ∈ {deviceType, timezone, time}：
+/// - deviceType：'web' / 'android' / 'ios' / 'windows' / 'macos' / 'linux' / 'fuchsia'
+/// - timezone：时区名（[DateTime.timeZoneName] 为空时回退为 UTC±HH:MM 偏移）
+/// - time：当前时间 ISO8601 字符串
+Future<NodeExecResult> _execDeviceVar(ExecContext ctx) async {
+  final property = ctx.node.params['property']?.toString() ?? 'deviceType';
+  String value;
+  switch (property) {
+    case 'timezone':
+      final name = DateTime.now().timeZoneName;
+      if (name != null && name.isNotEmpty) {
+        value = name;
+      } else {
+        // 回退：基于 offset 的 UTC±HH:MM。
+        final offset = DateTime.now().timeZoneOffset;
+        final sign = offset.isNegative ? '-' : '+';
+        final hh = offset.inHours.abs().toString().padLeft(2, '0');
+        final mm = (offset.inMinutes.abs() % 60).toString().padLeft(2, '0');
+        value = 'UTC$sign$hh:$mm';
+      }
+    case 'time':
+      value = DateTime.now().toIso8601String();
+    case 'deviceType':
+    default:
+      if (kIsWeb) {
+        value = 'web';
+      } else {
+        value = switch (defaultTargetPlatform) {
+          TargetPlatform.android => 'android',
+          TargetPlatform.iOS => 'ios',
+          TargetPlatform.windows => 'windows',
+          TargetPlatform.macOS => 'macos',
+          TargetPlatform.linux => 'linux',
+          TargetPlatform.fuchsia => 'fuchsia',
+        };
+      }
+  }
+  return NodeExecResult(
+    nextControlOutput: 'next',
+    dataOutputs: {'value': value},
+  );
+}
+
+/// code_run：在 JS 沙箱中执行用户代码。
+///
+/// 节点参数：
+/// - [language]：目前仅支持 `javascript`。
+/// - [code]：JS 代码字符串。代码可通过 `inputs` 全局变量访问 [inputs] 参数，
+///   最后一条表达式的求值结果作为 `result` 输出。
+/// - [inputs]：可选，Map 或 JSON 字符串，注入为 JS 全局 `inputs`。
+///
+/// 安全：通过 flutter_js 的 QuickJS 引擎隔离执行，无 Dart 互操作副作用。
+/// 异常（语法错误 / 运行时错误）抛出 StateError 由调用方记录。
+Future<NodeExecResult> _execCodeRun(ExecContext ctx) async {
+  final language = ctx.node.params['language']?.toString() ?? 'javascript';
+  if (language != 'javascript') {
+    throw StateError('code_run 暂不支持语言：$language');
+  }
+  final code = ctx.node.params['code']?.toString() ?? '';
+  if (code.trim().isEmpty) {
+    return const NodeExecResult(nextControlOutput: 'next', dataOutputs: {'result': null});
+  }
+  // 解析 inputs（Map 或 JSON 字符串）。
+  Object? inputsValue = resolveRef(ctx.node.params['inputs'], ctx.scope);
+  Map<String, dynamic> inputsMap;
+  if (inputsValue is Map) {
+    inputsMap = Map<String, dynamic>.from(inputsValue);
+  } else if (inputsValue is String && inputsValue.trim().isNotEmpty) {
+    try {
+      final decoded = jsonDecode(inputsValue);
+      inputsMap = decoded is Map ? Map<String, dynamic>.from(decoded) : {};
+    } catch (_) {
+      inputsMap = {};
+    }
+  } else {
+    inputsMap = {};
+  }
+
+  final runtime = getJavascriptRuntime();
+  try {
+    // 注入 inputs 全局变量。
+    runtime.evaluate('var inputs = ${jsonEncode(inputsMap)};');
+    final result = runtime.evaluate(code);
+    // flutter_js 的 evaluate 返回 JsEvalResult；未定义返回为 undefined。
+    final raw = result.isUndefined ? null : result.rawResult;
+    return NodeExecResult(
+      nextControlOutput: 'next',
+      dataOutputs: {'result': raw},
+    );
+  } catch (e) {
+    throw StateError('code_run 执行失败：$e');
+  } finally {
+    runtime.dispose();
+  }
 }
 
 // ===========================================================================

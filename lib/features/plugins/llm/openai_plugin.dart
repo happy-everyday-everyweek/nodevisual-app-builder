@@ -6,6 +6,25 @@ import 'package:http/http.dart' as http;
 import '../../../data/models/port.dart';
 import '../plugin_spec.dart';
 
+// 迁移说明（LLM SDK 方向）：
+// -----
+// 按需求 OpenAI 节点应使用官方 SDK（dart_openai，已在 pubspec.yaml 引入），
+// 而非手写 HTTP。当前实现仍保留手写 HTTP，原因：
+// 1. dart_openai 的 apiKey/baseUrl 为全局静态字段（OpenAI.apiKey / OpenAI.baseUrl），
+//    与本插件"每次 execute 按 config 注入"的 per-call 模型不匹配，
+//    直接替换会在并发调用时产生全局状态竞争。
+// 2. dart_openai 跨大版本（4.x → 5.x）API 有破坏性变更（消息模型从 String 改为
+//    ContentItem 数组），需在引入后按实际版本调整消息构造。
+// 3. 流式 SSE 解析在 SDK 中以 Stream<OpenAIStreamChatCompletionModel> 暴露，
+//    与现有 PluginEvent 适配需额外胶水代码。
+// 迁移路径（建议在能运行 flutter pub get + 集成测试的环境下进行）：
+//   - 新增 OpenAiSdkExecutor（implements PluginExecutor, StreamPluginExecutor），
+//     在 execute 开头 OpenAI.apiKey = config['apiKey']; OpenAI.baseUrl = base;
+//   - 用 OpenAI.instance.chat.create(...) 替换 _client.post(...)
+//   - 用 OpenAI.instance.chat.createStream(...) 替换手动 SSE 解析
+//   - 在 PluginRegistry.withBuiltins 用 OpenAiSdkExecutor() 替换 OpenAiExecutor()
+// Anthropic 暂无官方 Dart SDK，继续使用手写 HTTP。
+
 /// OpenAI Chat Completions 插件规格。
 ///
 /// id: `llm_openai`；输入 messages(list) / model(text) / temperature(number)；

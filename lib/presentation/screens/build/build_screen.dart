@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:share_plus/share_plus.dart';
 
-import '../../../core/constants.dart';
 import '../../../data/models/project.dart';
+import '../../../features/build_pipeline/artifact_download.dart';
 import '../../../features/build_pipeline/build_artifact.dart';
 import '../../../features/build_pipeline/build_progress.dart';
 import '../../../features/build_pipeline/build_providers.dart';
@@ -338,7 +337,11 @@ class _BuildResultView extends ConsumerWidget {
   }
 }
 
-/// 单个产物项（含分享按钮）。
+/// 单个产物项（含下载/分享按钮）。
+///
+/// 通过 [downloadArtifact] 统一处理：
+/// - 非 Web 平台：调起系统分享面板（share_plus）。
+/// - Web 平台：触发浏览器下载（产物字节在内存中）。
 class _ArtifactTile extends StatelessWidget {
   const _ArtifactTile({required this.artifact});
   final BuildArtifact artifact;
@@ -368,12 +371,18 @@ class _ArtifactTile extends StatelessWidget {
             ),
           ),
           IconButton(
-            icon: const Icon(Icons.share_outlined),
-            tooltip: '分享',
+            icon: const Icon(Icons.download_outlined),
+            tooltip: '下载',
             onPressed: () async {
-              await Share.shareXFiles(
-                [XFile(artifact.path)],
-                text: '${artifact.displayName} - 由 ${AppConstants.appName} 生成',
+              final ok = await downloadArtifact(artifact);
+              if (!context.mounted) return;
+              ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                SnackBar(
+                  content: Text(ok
+                      ? '已开始下载 ${artifact.displayName}'
+                      : '无法下载该产物（缺少内存数据）'),
+                  duration: const Duration(seconds: 2),
+                ),
               );
             },
           ),
@@ -395,6 +404,8 @@ class _ArtifactTile extends StatelessWidget {
 
   String _targetPath(BuildArtifact a) {
     final path = a.path;
+    // 内存产物（Web 平台）显示友好标识。
+    if (a.isInMemory) return '内存产物';
     // 缩短显示：只保留最后 2 段（兼容 Web 与原生，统一用 '/' 分隔）。
     final parts = path.split('/');
     if (parts.length <= 2) return path;

@@ -309,6 +309,7 @@ class _NodeEditorBody extends ConsumerWidget {
   /// 重新派生输出。
   ///
   /// 单次 [GraphMutator.updateNode] 提交，避免多次落盘的中间态。
+  /// 对于 if 节点，cases / includeDefault 变更后同步增删 if_branch 子节点。
   void _commitParam(WidgetRef ref, String name, Object? value) {
     final spec = this.spec;
     if (spec == null) return;
@@ -333,6 +334,10 @@ class _NodeEditorBody extends ConsumerWidget {
           controlOutputs: ctrl,
           dataOutputs: data,
         );
+    // if 节点的 cases / includeDefault 变更 → 同步子母分支子节点。
+    if (spec.kind == 'if' && (name == 'cases' || name == 'includeDefault')) {
+      ref.read(graphMutatorProvider.notifier).syncIfBranches(nodeId);
+    }
   }
 }
 
@@ -1447,33 +1452,12 @@ class _CategoryChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
       ),
       child: Text(
-        _label(category),
+        displayGroupLabel(displayGroupOf(category)),
         style: theme.textTheme.labelSmall?.copyWith(
           color: theme.colorScheme.onSecondaryContainer,
         ),
       ),
     );
-  }
-
-  static String _label(NodeCategory c) {
-    switch (c) {
-      case NodeCategory.variable:
-        return '变量';
-      case NodeCategory.operation:
-        return '运算';
-      case NodeCategory.logic:
-        return '逻辑';
-      case NodeCategory.flow:
-        return '流程';
-      case NodeCategory.database:
-        return '数据库';
-      case NodeCategory.function:
-        return '函数';
-      case NodeCategory.uiControl:
-        return 'UI 控制';
-      case NodeCategory.plugin:
-        return '插件';
-    }
   }
 }
 

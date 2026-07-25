@@ -135,6 +135,11 @@ class FunctionDef {
   /// 控制流连线列表（仅表达执行顺序与分支，无类型校验）。
   final List<ControlEdge> controlEdges;
 
+  /// 函数版本号（每次退出编辑器自动保存时 +1，从 1 开始）。
+  ///
+  /// 用于追踪编辑会话次数。0 / 缺省值在 [fromJson] 中归一化为 1。
+  final int version;
+
   const FunctionDef({
     required this.id,
     required this.name,
@@ -146,6 +151,7 @@ class FunctionDef {
     this.outputs = const [],
     this.nodes = const [],
     this.controlEdges = const [],
+    this.version = 1,
   });
 
   FunctionDef copyWith({
@@ -159,6 +165,7 @@ class FunctionDef {
     List<FuncParam>? outputs,
     List<Node>? nodes,
     List<ControlEdge>? controlEdges,
+    int? version,
   }) =>
       FunctionDef(
         id: id ?? this.id,
@@ -171,6 +178,7 @@ class FunctionDef {
         outputs: outputs ?? this.outputs,
         nodes: nodes ?? this.nodes,
         controlEdges: controlEdges ?? this.controlEdges,
+        version: version ?? this.version,
       );
 
   /// 推导既有无签名函数的默认签名。
@@ -207,7 +215,8 @@ class FunctionDef {
           _funcDeepEq.equals(inputs, other.inputs) &&
           _funcDeepEq.equals(outputs, other.outputs) &&
           _funcDeepEq.equals(nodes, other.nodes) &&
-          _funcDeepEq.equals(controlEdges, other.controlEdges);
+          _funcDeepEq.equals(controlEdges, other.controlEdges) &&
+          version == other.version;
 
   @override
   int get hashCode => Object.hash(
@@ -220,6 +229,7 @@ class FunctionDef {
         Object.hashAll(outputs),
         Object.hashAll(nodes),
         Object.hashAll(controlEdges),
+        version,
       );
 
   Map<String, dynamic> toJson() => {
@@ -236,6 +246,7 @@ class FunctionDef {
         if (nodes.isNotEmpty) 'nodes': nodes.map((e) => e.toJson()).toList(),
         if (controlEdges.isNotEmpty)
           'controlEdges': controlEdges.map((e) => e.toJson()).toList(),
+        if (version > 1) 'version': version,
       };
 
   factory FunctionDef.fromJson(Map<String, dynamic> json) => FunctionDef(
@@ -270,6 +281,7 @@ class FunctionDef {
                 ?.map((e) => ControlEdge.fromJson(e as Map<String, dynamic>))
                 .toList() ??
             const [],
+        version: (json['version'] as num?)?.toInt() ?? 1,
       ).migrateSignature();
 
   @override

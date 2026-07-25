@@ -1,10 +1,13 @@
-import 'build_pipeline_io.dart' if (dart.library.html) 'build_pipeline_stub.dart';
+import 'build_pipeline_io.dart'
+    if (dart.library.html) 'build_pipeline_web.dart';
 
-export 'build_pipeline_io.dart' if (dart.library.html) 'build_pipeline_stub.dart';
+export 'build_pipeline_io.dart'
+    if (dart.library.html) 'build_pipeline_web.dart';
 
 /// 创建 [BuildPipeline] 实例（平台相关）。
 ///
-/// - 非 Web 平台：返回真正的 [BuildPipeline]（基于 dart:io 文件系统）。
-/// - Web 平台：返回 [StubBuildPipeline]，所有方法抛 [UnsupportedError]，
-///   因为端侧构建依赖文件系统与原生工具链，Web 不可用。
+/// - 非 Web 平台：返回基于 dart:io 文件系统的 [BuildPipeline]，
+///   支持 Web / Android / Windows 三类产物（Android / Windows 为 IR bundle）。
+/// - Web 平台：返回内存版 [BuildPipeline]，仅支持 Web 目标，
+///   产物以 [BuildArtifact.bytes] 形式保留在内存，由 UI 层触发浏览器下载。
 BuildPipeline createBuildPipeline() => createBuildPipelineImpl();
