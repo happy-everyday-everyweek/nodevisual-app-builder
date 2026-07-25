@@ -1196,6 +1196,104 @@ class NodeKindRegistry {
           (name: 'usage_tokens', type: PortType.number),
         ],
       ),
+
+      // ---- 原生能力插件（通过插件形式发布的各端原生能力）----
+      NodeKindSpec(
+        kind: 'plugin_clipboard',
+        displayName: '剪贴板',
+        category: NodeCategory.plugin,
+        pluginId: 'native_clipboard',
+        paramSchema: const [
+          ParamSpec(
+            name: 'operation',
+            label: '操作',
+            inputType: ParamInputType.dropdown,
+            options: ['copy', 'paste'],
+            defaultValue: 'copy',
+          ),
+          ParamSpec(
+            name: 'text',
+            label: '文本',
+            inputType: ParamInputType.text,
+            acceptsRef: true,
+            expectedType: PortType.string,
+          ),
+        ],
+        defaultControlOutputs: ['next'],
+        defaultDataOutputs: [(name: 'text', type: PortType.string)],
+      ),
+      NodeKindSpec(
+        kind: 'plugin_haptic',
+        displayName: '触感反馈',
+        category: NodeCategory.plugin,
+        pluginId: 'native_haptic',
+        paramSchema: const [
+          ParamSpec(
+            name: 'type',
+            label: '类型',
+            inputType: ParamInputType.dropdown,
+            options: ['light', 'medium', 'heavy', 'selection'],
+            defaultValue: 'light',
+          ),
+        ],
+        defaultControlOutputs: ['next'],
+        defaultDataOutputs: [(name: 'ok', type: PortType.bool)],
+      ),
+      NodeKindSpec(
+        kind: 'plugin_share',
+        displayName: '分享',
+        category: NodeCategory.plugin,
+        pluginId: 'native_share',
+        paramSchema: const [
+          ParamSpec(
+            name: 'text',
+            label: '文本',
+            inputType: ParamInputType.text,
+            acceptsRef: true,
+            expectedType: PortType.string,
+          ),
+          ParamSpec(
+            name: 'subject',
+            label: '主题（可选）',
+            inputType: ParamInputType.text,
+            acceptsRef: true,
+            expectedType: PortType.string,
+          ),
+        ],
+        defaultControlOutputs: ['next'],
+        defaultDataOutputs: [(name: 'ok', type: PortType.bool)],
+      ),
+
+      // ---- 代码运行节点（用户自定义代码）----
+      NodeKindSpec(
+        kind: 'code_run',
+        displayName: '运行代码',
+        category: NodeCategory.operation,
+        paramSchema: const [
+          ParamSpec(
+            name: 'language',
+            label: '语言',
+            inputType: ParamInputType.dropdown,
+            options: ['javascript'],
+            defaultValue: 'javascript',
+          ),
+          ParamSpec(
+            name: 'code',
+            label: '代码',
+            inputType: ParamInputType.text,
+            defaultValue: '',
+          ),
+          ParamSpec(
+            name: 'inputs',
+            label: '输入（JSON）',
+            inputType: ParamInputType.text,
+            acceptsRef: true,
+            expectedType: PortType.map,
+          ),
+        ],
+        defaultControlOutputs: ['next'],
+        defaultDataOutputs: [(name: 'result', type: PortType.any)],
+      ),
     ];
 
     final map = <String, NodeKindSpec>{};

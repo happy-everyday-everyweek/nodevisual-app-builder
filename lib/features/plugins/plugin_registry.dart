@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'llm/anthropic_plugin.dart';
 import 'llm/openai_plugin.dart';
+import 'native/native_plugins.dart';
 import 'plugin_config_storage.dart';
 import 'plugin_config_storage_factory.dart';
 import 'plugin_spec.dart';
@@ -60,9 +61,13 @@ class PluginRegistry {
   static PluginRegistry withBuiltins() {
     final entries = <String, PluginEntry>{};
     final registry = PluginRegistry._(entries);
-    // ---- Task 10：内置 LLM 插件 ----
+    // ---- 内置 LLM 插件 ----
     registry.register(openAiPluginSpec, OpenAiExecutor());
     registry.register(anthropicPluginSpec, AnthropicExecutor());
+    // ---- 各端原生能力插件（通过插件形式发布的原生能力）----
+    registry.register(clipboardPluginSpec, const ClipboardExecutor());
+    registry.register(hapticPluginSpec, const HapticExecutor());
+    registry.register(sharePluginSpec, const ShareExecutor());
     return registry;
   }
 }

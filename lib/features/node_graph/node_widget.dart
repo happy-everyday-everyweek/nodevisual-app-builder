@@ -361,6 +361,14 @@ class _NodeCardState extends State<NodeCard>
         return Icons.functions;
       case 'plugin':
         return Icons.extension;
+      case 'plugin_clipboard':
+        return Icons.content_copy;
+      case 'plugin_haptic':
+        return Icons.vibration;
+      case 'plugin_share':
+        return Icons.share;
+      case 'code_run':
+        return Icons.code;
       default:
         return Icons.widgets_outlined;
     }

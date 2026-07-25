@@ -312,6 +312,37 @@ class WebRuntimeTemplate {
       case "literal": {
         return { outputs: { value: params.value } };
       }
+      case "code_run": {
+        // 在 Web 端直接用浏览器 JS 引擎 eval 用户代码。
+        // 注入 inputs 全局变量；最后一行表达式的求值结果作为 result。
+        const lang = params.language || "javascript";
+        if (lang !== "javascript") {
+          throw new Error("code_run 仅支持 javascript，得到：" + lang);
+        }
+        const code = params.code || "";
+        if (!code || !code.trim()) {
+          return { outputs: { result: null } };
+        }
+        // 解析 inputs（Map 或 JSON 字符串）。
+        let inputsVal = resolveRef(params.inputs, scope);
+        let inputsMap = {};
+        if (inputsVal && typeof inputsVal === "object" && !Array.isArray(inputsVal)) {
+          inputsMap = inputsVal;
+        } else if (typeof inputsVal === "string" && inputsVal.trim()) {
+          try {
+            const d = JSON.parse(inputsVal);
+            if (d && typeof d === "object" && !Array.isArray(d)) inputsMap = d;
+          } catch (e) { /* 降级为空 */ }
+        }
+        try {
+          // eslint-disable-next-line no-new-func
+          const fn = new Function("inputs", "\"use strict\";\n" + code);
+          const result = fn(inputsMap);
+          return { outputs: { result: result === undefined ? null : result } };
+        } catch (e) {
+          throw new Error("code_run 执行失败：" + e.message);
+        }
+      }
       case "device_var": {
         // 设备只读属性：deviceType / timezone / time。
         const prop = params.property || "deviceType";
