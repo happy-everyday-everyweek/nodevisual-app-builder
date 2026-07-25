@@ -1578,7 +1578,8 @@ String _stringOf(Object? v) {
 ///   未注册回退 kind；找不到节点 / 输出时回退 `#nodeId.outputName`）；
 /// - funcVar：`#变量名`（找不到回退 `#func:varId`）；
 /// - projVar：`#变量名`（找不到回退 `#proj:varId`）；
-/// - component：`#组件展示名.字段名`（找不到回退 `#component:componentId.fieldName`）。
+/// - component：`#组件展示名.字段名`（找不到回退 `#component:componentId.fieldName`）；
+/// - device：`#设备 › 属性展示名`（属性展示名取自 [DeviceProperty.labelOf]）。
 String _refDisplayLabel(VariableRef ref, FunctionDef fn, Project? project) {
   switch (ref.source) {
     case VariableSource.upstream:
@@ -1628,6 +1629,10 @@ String _refDisplayLabel(VariableRef ref, FunctionDef fn, Project? project) {
         return '#<无效引用>';
       }
       return '#component:$componentId.$fieldName';
+    case VariableSource.device:
+      final property = ref.property;
+      if (property == null) return '#<无效引用>';
+      return '#设备 › ${DeviceProperty.labelOf(property)}';
   }
 }
 

@@ -76,9 +76,23 @@ class WebRuntimeTemplate {
   const LIST_REGISTRY = new Map();
 
   // ====== # 引用解析 ======
+  //
+  // 支持两种 JSON 形式：
+  // 1. 裸 VariableRef JSON（节点 params 中的 # 引用）：`{source, nodeId, ...}`
+  //    由节点编辑页 _commitParam 调用 r.toJson() 写入，与 Dart 端
+  //    node_executors.resolveRef 的 `value.containsKey('source')` 分支对齐。
+  // 2. Binding 包装形式（UI 绑定）：`{ref: {source, nodeId, ...}}`
+  //    由 UI 编辑器写入属性 binding 字段。
   function resolveRef(value, scope) {
-    if (value && typeof value === "object" && value.ref) {
-      const r = value.ref;
+    if (value && typeof value === "object") {
+      let r;
+      if (value.ref) {
+        r = value.ref;
+      } else if (value.source) {
+        r = value;
+      } else {
+        return value;
+      }
       if (r.source === "upstream") {
         return scope.getOutput(r.nodeId, r.outputName);
       } else if (r.source === "funcVar") {
@@ -98,7 +112,6 @@ class WebRuntimeTemplate {
       } else if (r.source === "device") {
         return resolveDeviceProperty(r.property);
       }
-      return undefined;
     }
     return value;
   }
@@ -232,7 +245,7 @@ class WebRuntimeTemplate {
         const v = resolveRef(params.value, scope);
         const target = params.target || "funcVar";
         const varId = params.varId;
-        if (!varId) return { outputs: { value: v } };
+        if (!varId) return { controlOutput: "next" };
         if (target === "projVar") {
           scope.setProjVar(varId, v);
         } else {
@@ -240,7 +253,9 @@ class WebRuntimeTemplate {
           const exists = (func.funcVars || []).some(v => v.id === varId);
           if (exists) scope.setFuncVar(varId, v);
         }
-        return { outputs: { value: v } };
+        // 与 Dart 端 _execVariableSet 对齐：variable_set 无 dataOutputs，
+        // 仅走控制流 next 输出（不返回 value，避免误用）。
+        return { controlOutput: "next" };
       }
       case "variable_get": {
         // 兼容旧 IR；新项目应通过 # 引用读取。
@@ -715,6 +730,10 @@ class WebRuntimeTemplate {
     }
     if (ref.source === "funcVar") return undefined;
     if (ref.source === "upstream") return undefined;
+    // 设备变量：Web 端初始即可解析（与 resolveDeviceProperty 一致）。
+    if (ref.source === "device") {
+      return resolveDeviceProperty(ref.property);
+    }
     // 组件上下文变量：从栈中查找匹配的组件上下文，按 fieldName 取字段。
     // 形如 'item' / 'index' / 'value' / 'tab' / 'item.name'（嵌套字段用点分隔）。
     if (ref.source === "component") {

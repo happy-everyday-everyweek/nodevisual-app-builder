@@ -125,12 +125,55 @@ class IrValidator {
 
     // 校验节点 params 中的 # 引用（引用完整性 + 类型匹配 warning）。
     for (final node in fn.nodes) {
-      _validateNodeRefs(node, fn, project, issues, '$path.nodes.${node.id}');
+      final nodePath = '$path.nodes.${node.id}';
+      _validateNodeKind(node, issues, nodePath);
+      _validateNodeRefs(node, fn, project, issues, nodePath);
     }
 
     // 校验函数 entry 引用。
     if (fn.entry != null) {
       _validateEntry(fn.entry!, project, issues, '$path.entry');
+    }
+  }
+
+  /// 校验节点 kind 合法性与节点特定参数。
+  ///
+  /// - 拒绝已废弃的 `device_var` 节点（应通过 `#device:<property>` 引用）。
+  /// - `variable_set` 节点校验 target ∈ {'funcVar', 'projVar'} 且 varId 非空。
+  static void _validateNodeKind(
+    Node node,
+    List<Issue> issues,
+    String path,
+  ) {
+    if (node.kind == 'device_var') {
+      issues.add(Issue(
+        severity: IssueSeverity.error,
+        path: path,
+        message: '已废弃的 device_var 节点（设备变量应通过 #device:<property> '
+            '引用，迁移应在 FunctionDef.fromJson 时自动完成；若仍出现说明 IR '
+            '绕过了 fromJson 构造）',
+      ),);
+      return;
+    }
+    if (node.kind == 'variable_set') {
+      final target = node.params['target']?.toString();
+      const allowed = {'funcVar', 'projVar'};
+      if (target == null || !allowed.contains(target)) {
+        issues.add(Issue(
+          severity: IssueSeverity.error,
+          path: path,
+          message: 'variable_set 节点的 target 参数非法（"$target"），'
+              '应为 funcVar 或 projVar',
+        ),);
+      }
+      final varId = node.params['varId']?.toString();
+      if (varId == null || varId.isEmpty) {
+        issues.add(Issue(
+          severity: IssueSeverity.error,
+          path: path,
+          message: 'variable_set 节点缺少 varId 参数（目标变量 id）',
+        ),);
+      }
     }
   }
 

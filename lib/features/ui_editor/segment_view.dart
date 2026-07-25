@@ -596,6 +596,8 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
         return '{proj:${v?.name ?? r.varId}}';
       case VariableSource.component:
         return '{#:${r.fieldName}}';
+      case VariableSource.device:
+        return '{device:${DeviceProperty.labelOf(r.property ?? '')}}';
     }
   }
 
@@ -1537,6 +1539,8 @@ class _BindingEditor extends ConsumerWidget {
         return '项目变量 ${v?.name ?? r.varId}';
       case VariableSource.component:
         return '组件 ${r.fieldName}';
+      case VariableSource.device:
+        return '设备 ${DeviceProperty.labelOf(r.property ?? '')}';
     }
   }
 }

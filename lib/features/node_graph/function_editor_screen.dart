@@ -6,6 +6,7 @@ import '../../core/constants.dart';
 import '../../data/models/entry.dart';
 import '../../data/models/function_def.dart';
 import '../../data/models/node.dart';
+import '../build_pipeline/build_target.dart';
 import '../marketplace/marketplace_providers.dart';
 import 'connection_painter.dart';
 import 'dag_validator.dart';
@@ -719,6 +720,7 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
             icon: _iconForKind(spec.kind, spec.category),
             category: spec.category,
             group: displayGroupOf(spec.category),
+            platforms: spec.platforms,
           ),
     ];
     // 追加市场插件（去重：避免与内置 plugin_openai/anthropic 等 kind 冲突）。
@@ -912,6 +914,7 @@ class _NodeKindEntry {
     required this.icon,
     required this.category,
     required this.group,
+    this.platforms,
   });
 
   final String kind;
@@ -919,6 +922,23 @@ class _NodeKindEntry {
   final IconData icon;
   final NodeCategory category;
   final NodeDisplayGroup group;
+
+  /// 该节点可用的目标平台集合（null/空 = 全平台）。
+  ///
+  /// 用于在面板按钮上显示平台标签，提示用户该节点仅特定端可用。
+  /// 例：plugin_haptic 的 platforms = [BuildTarget.android]。
+  final List<BuildTarget>? platforms;
+
+  /// 是否为全平台可用。
+  bool get isAllPlatforms => platforms == null || platforms!.isEmpty;
+
+  /// 平台标签简写（用于面板按钮底部小标签）。
+  ///
+  /// 全平台返回空串；非全平台返回平台 label 拼接，如 "Android / Windows"。
+  String get platformLabel {
+    if (isAllPlatforms) return '';
+    return platforms!.map((p) => p.label).join(' / ');
+  }
 }
 
 /// 按 kind 推断调色板按钮图标（与节点类别语义对齐）。
@@ -1117,6 +1137,8 @@ class _PaletteButtonState extends State<_PaletteButton> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
+    final platformLabel = widget.entry.platformLabel;
+    final isPlatformLimited = !widget.entry.isAllPlatforms;
     return GestureDetector(
       onTapDown: (_) => _setPressed(true),
       onTapUp: (_) => _setPressed(false),
@@ -1160,6 +1182,27 @@ class _PaletteButtonState extends State<_PaletteButton> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
+              if (isPlatformLimited) ...[
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: cs.tertiary.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    platformLabel,
+                    style: TextStyle(
+                      fontSize: 9,
+                      height: 1.2,
+                      color: cs.onSurfaceVariant,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
             ],
           ),
         ),
