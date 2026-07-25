@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart' show IconData, Icons;
 import 'package:uuid/uuid.dart';
 
 import '../../data/models/func_param.dart';
@@ -32,6 +33,69 @@ enum NodeCategory {
 
   /// 插件节点（plugin_*）。
   plugin,
+}
+
+/// 节点展示分组（用户视角的 3 大分类，用于面板分组展示）。
+///
+/// 将细粒度的 [NodeCategory] 归并为 3 个用户友好分组：
+/// 1. [variablesDatabase] — 变量与数据库
+/// 2. [logicFlow] — 逻辑与流程
+/// 3. [executionFunctions] — 执行与函数（不在前两个分类的节点归入此组）
+enum NodeDisplayGroup {
+  /// 变量与数据库。
+  variablesDatabase,
+
+  /// 逻辑与流程。
+  logicFlow,
+
+  /// 执行与函数（兜底分组）。
+  executionFunctions,
+}
+
+/// 将细粒度 [NodeCategory] 映射到 3 大展示分组。
+///
+/// 规则：
+/// - variable / database → [NodeDisplayGroup.variablesDatabase]
+/// - logic / flow → [NodeDisplayGroup.logicFlow]
+/// - 其余（operation / function / uiControl / plugin）→ [NodeDisplayGroup.executionFunctions]
+NodeDisplayGroup displayGroupOf(NodeCategory category) {
+  switch (category) {
+    case NodeCategory.variable:
+    case NodeCategory.database:
+      return NodeDisplayGroup.variablesDatabase;
+    case NodeCategory.logic:
+    case NodeCategory.flow:
+      return NodeDisplayGroup.logicFlow;
+    case NodeCategory.operation:
+    case NodeCategory.function:
+    case NodeCategory.uiControl:
+    case NodeCategory.plugin:
+      return NodeDisplayGroup.executionFunctions;
+  }
+}
+
+/// 展示分组的中文名称。
+String displayGroupLabel(NodeDisplayGroup group) {
+  switch (group) {
+    case NodeDisplayGroup.variablesDatabase:
+      return '变量与数据库';
+    case NodeDisplayGroup.logicFlow:
+      return '逻辑与流程';
+    case NodeDisplayGroup.executionFunctions:
+      return '执行与函数';
+  }
+}
+
+/// 展示分组的图标。
+IconData displayGroupIcon(NodeDisplayGroup group) {
+  switch (group) {
+    case NodeDisplayGroup.variablesDatabase:
+      return Icons.storage_outlined;
+    case NodeDisplayGroup.logicFlow:
+      return Icons.account_tree_outlined;
+    case NodeDisplayGroup.executionFunctions:
+      return Icons.play_circle_outline;
+  }
 }
 
 /// 参数输入控件类型。
@@ -549,6 +613,28 @@ class NodeKindRegistry {
         defaultControlOutputs: [],
         defaultDataOutputs: [],
         dynamicOutputs: _ifOutputs,
+      ),
+      // ---- if 分支子节点（子母节点设计：插入 if 时自动生成的子节点）----
+      NodeKindSpec(
+        kind: 'if_branch',
+        displayName: '条件分支出口',
+        category: NodeCategory.flow,
+        paramSchema: const [
+          ParamSpec(
+            name: 'parentId',
+            label: '所属条件节点',
+            inputType: ParamInputType.text,
+            defaultValue: '',
+          ),
+          ParamSpec(
+            name: 'caseName',
+            label: '分支名',
+            inputType: ParamInputType.text,
+            defaultValue: '',
+          ),
+        ],
+        defaultControlOutputs: ['next'],
+        defaultDataOutputs: [],
       ),
       NodeKindSpec(
         kind: 'loop',

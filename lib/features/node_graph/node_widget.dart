@@ -346,6 +346,8 @@ class _NodeCardState extends State<NodeCard>
         return Icons.text_fields;
       case 'if':
         return Icons.call_split;
+      case 'if_branch':
+        return Icons.subdirectory_arrow_right;
       case 'loop':
         return Icons.loop;
       case 'db_query':

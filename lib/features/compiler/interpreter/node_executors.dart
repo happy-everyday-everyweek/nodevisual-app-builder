@@ -212,6 +212,9 @@ Future<NodeExecResult> executeNode(ExecContext ctx) async {
     // ---- 流程控制 ----
     case 'if':
       return _execIf(ctx);
+    case 'if_branch':
+      // 子母节点设计的子节点：纯控制流传递，走 next 输出（无数据产出）。
+      return const NodeExecResult(nextControlOutput: 'next');
     case 'loop':
       return _execLoop(ctx);
     case 'return':

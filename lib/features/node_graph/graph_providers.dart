@@ -67,10 +67,165 @@ class GraphMutator extends Notifier<FunctionDef?> {
   String addNode(String kind, {NodePosition? position}) {
     final fn = _currentFunction;
     if (fn == null) return '';
+    // 子母节点：插入 if 条件节点时自动生成母节点 + 2 个子节点（分支出口）。
+    if (kind == 'if') {
+      return addIfWithBranches(position: position);
+    }
     final node = _createDefaultNode(kind)
         .copyWith(position: position ?? const NodePosition(x: 0, y: 0));
     _commit(fn.copyWith(nodes: [...fn.nodes, node]));
     return node.id;
+  }
+
+  /// 插入 if 条件节点（母节点）+ 2 个 if_branch 子节点（分支出口）。
+  ///
+  /// 子母节点设计：用户插入条件节点时，自动生成：
+  /// - 1 个母节点（if，含 condition + cases=['true','false']）
+  /// - 2 个子节点（if_branch，分别对应 'true' / 'false' 分支）
+  ///
+  /// 子节点 positioned 在母节点下方左右展开。返回母节点 id。
+  String addIfWithBranches({NodePosition? position}) {
+    final fn = _currentFunction;
+    if (fn == null) return '';
+    final pos = position ?? const NodePosition(x: 0, y: 0);
+    final parentNode = _createDefaultNode('if').copyWith(position: pos);
+    final cases = _ifCasesOf(parentNode);
+    final children = <Node>[];
+    final newEdges = <ControlEdge>[];
+    for (var i = 0; i < cases.length; i++) {
+      final childPos = _branchPosition(pos, i, cases.length);
+      final child = _createDefaultNode('if_branch').copyWith(
+        position: childPos,
+        params: {
+          'parentId': parentNode.id,
+          'caseName': cases[i],
+          'name': '分支: ${cases[i]}',
+        },
+      );
+      children.add(child);
+      // 自动连线：母节点的 case 输出 → 子分支节点入口。
+      newEdges.add(ControlEdge(
+        fromNode: parentNode.id,
+        fromPort: cases[i],
+        toNode: child.id,
+      ));
+    }
+    _commit(fn.copyWith(
+      nodes: [...fn.nodes, parentNode, ...children],
+      controlEdges: [...fn.controlEdges, ...newEdges],
+    ));
+    return parentNode.id;
+  }
+
+  /// 同步 if 母节点的分支子节点：按当前 cases 增删 if_branch 子节点。
+  ///
+  /// 当用户在节点编辑页修改 if 的 cases 后调用：
+  /// - 新增的 case → 创建对应 if_branch 子节点（positioned 在母节点下方）
+  /// - 删除的 case → 移除对应 if_branch 子节点及其关联边
+  /// - 已存在的 case → 保留（不重置用户已建立的连线）
+  void syncIfBranches(String ifNodeId) {
+    final fn = _currentFunction;
+    if (fn == null) return;
+    Node? parentNode;
+    for (final n in fn.nodes) {
+      if (n.id == ifNodeId && n.kind == 'if') {
+        parentNode = n;
+        break;
+      }
+    }
+    if (parentNode == null) return;
+    final desiredCases = _ifCasesOf(parentNode);
+    // 现有子节点：parentId == ifNodeId 的 if_branch 节点。
+    final existingChildren = fn.nodes
+        .where((n) =>
+            n.kind == 'if_branch' && n.params['parentId'] == ifNodeId)
+        .toList(growable: false);
+    final existingCaseNames = existingChildren
+        .map((n) => n.params['caseName']?.toString() ?? '')
+        .toList(growable: false);
+
+    final toAdd = <String>[];
+    for (final c in desiredCases) {
+      if (!existingCaseNames.contains(c)) toAdd.add(c);
+    }
+    final toRemove = <String>{};
+    for (final i = 0; i < existingChildren.length; i++) {
+      final name = existingCaseNames[i];
+      if (!desiredCases.contains(name)) {
+        toRemove.add(existingChildren[i].id);
+      }
+    }
+    if (toAdd.isEmpty && toRemove.isEmpty) return;
+
+    final newNodes = <Node>[];
+    for (final n in fn.nodes) {
+      if (toRemove.contains(n.id)) continue;
+      newNodes.add(n);
+    }
+    final newBranchNodes = <Node>[];
+    final newEdges = <ControlEdge>[];
+    for (final c in toAdd) {
+      final idx = desiredCases.indexOf(c);
+      final childPos = _branchPosition(parentNode.position, idx, desiredCases.length);
+      final child = _createDefaultNode('if_branch').copyWith(
+        position: childPos,
+        params: {
+          'parentId': ifNodeId,
+          'caseName': c,
+          'name': '分支: $c',
+        },
+      );
+      newBranchNodes.add(child);
+      // 自动连线：母节点的 case 输出 → 新子分支节点入口。
+      newEdges.add(ControlEdge(
+        fromNode: ifNodeId,
+        fromPort: c,
+        toNode: child.id,
+      ));
+    }
+    final allNodes = [...newNodes, ...newBranchNodes];
+    // 保留未被删除的边，并追加新增的边（同时去重：若该 fromPort 已有边则替换）。
+    final existingEdges = fn.controlEdges
+        .where((e) =>
+            !toRemove.contains(e.fromNode) && !toRemove.contains(e.toNode))
+        .toList(growable: false);
+    final newFromPorts = newEdges.map((e) => '${e.fromNode}:${e.fromPort}').toSet();
+    final filteredExisting = existingEdges
+        .where((e) => !newFromPorts.contains('${e.fromNode}:${e.fromPort}'))
+        .toList(growable: false);
+    _commit(fn.copyWith(
+      nodes: allNodes,
+      controlEdges: [...filteredExisting, ...newEdges],
+    ));
+  }
+
+  /// 读取 if 节点当前的 cases 列表（含 default）。
+  List<String> _ifCasesOf(Node ifNode) {
+    final rawCases = ifNode.params['cases'];
+    List<String> cases;
+    if (rawCases is List) {
+      cases = rawCases.map((e) => e.toString()).toList(growable: false);
+    } else {
+      cases = const ['true', 'false'];
+    }
+    if (cases.isEmpty) cases = const ['true'];
+    if (ifNode.params['includeDefault'] == true) {
+      cases = [...cases, 'default'];
+    }
+    return cases;
+  }
+
+  /// 计算第 [index] 个分支子节点相对母节点的画布位置。
+  ///
+  /// 子节点在母节点下方水平展开：偶数个时左右对称，奇数个时从左到右排列。
+  NodePosition _branchPosition(NodePosition parent, int index, int total) {
+    const branchOffsetY = 140.0; // 母节点下方间距
+    const branchSpacingX = 200.0; // 子节点水平间距
+    final startX = parent.x - ((total - 1) * branchSpacingX) / 2;
+    return NodePosition(
+      x: startX + index * branchSpacingX,
+      y: parent.y + branchOffsetY,
+    );
   }
 
   /// 移动节点到指定画布坐标。

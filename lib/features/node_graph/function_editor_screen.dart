@@ -66,7 +66,7 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
   bool _paletteExpanded = false;
 
   /// 调色板中已折叠的节点分类（默认全展开，点击分组标题可折叠）。
-  final Set<NodeCategory> _collapsedCategories = <NodeCategory>{};
+  final Set<NodeDisplayGroup> _collapsedGroups = <NodeDisplayGroup>{};
 
   @override
   void initState() {
@@ -733,15 +733,18 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
 
   Widget _buildPaletteGrid(ThemeData theme) {
     // 收集所有节点种类：注册表内置规格 + 市场插件（plugin_<id>）。
+    // 过滤掉 if_branch（子母节点的子节点，由 if 节点自动生成，不可手动添加）。
     final installedSpecs = ref.watch(installedPluginSpecsProvider);
     final entries = <_NodeKindEntry>[
       for (final spec in NodeKindRegistry.allKinds())
-        _NodeKindEntry(
-          kind: spec.kind,
-          label: spec.displayName,
-          icon: _iconForKind(spec.kind, spec.category),
-          category: spec.category,
-        ),
+        if (spec.kind != 'if_branch')
+          _NodeKindEntry(
+            kind: spec.kind,
+            label: spec.displayName,
+            icon: _iconForKind(spec.kind, spec.category),
+            category: spec.category,
+            group: displayGroupOf(spec.category),
+          ),
     ];
     // 追加市场插件（去重：避免与内置 plugin_openai/anthropic 等 kind 冲突）。
     for (final s in installedSpecs) {
@@ -752,28 +755,29 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
         label: s.displayName,
         icon: Icons.extension,
         category: NodeCategory.plugin,
+        group: displayGroupOf(NodeCategory.plugin),
       ));
     }
 
-    // 按 NodeCategory 声明序分组，确保调色板分组顺序稳定。
+    // 按 3 大展示分组：变量与数据库 / 逻辑与流程 / 执行与函数。
     return ConstrainedBox(
       constraints: const BoxConstraints(maxHeight: 280),
       child: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
         children: [
-          for (final cat in NodeCategory.values)
-            if (entries.any((e) => e.category == cat))
-              _PaletteCategoryGroup(
-                category: cat,
+          for (final group in NodeDisplayGroup.values)
+            if (entries.any((e) => e.group == group))
+              _PaletteGroupWidget(
+                group: group,
                 entries: entries
-                    .where((e) => e.category == cat)
+                    .where((e) => e.group == group)
                     .toList(growable: false),
-                collapsed: _collapsedCategories.contains(cat),
+                collapsed: _collapsedGroups.contains(group),
                 onToggle: () => setState(() {
-                  if (_collapsedCategories.contains(cat)) {
-                    _collapsedCategories.remove(cat);
+                  if (_collapsedGroups.contains(group)) {
+                    _collapsedGroups.remove(group);
                   } else {
-                    _collapsedCategories.add(cat);
+                    _collapsedGroups.add(group);
                   }
                 }),
                 onTapEntry: _addNodeOfKind,
@@ -1184,56 +1188,14 @@ class _NodeKindEntry {
     required this.label,
     required this.icon,
     required this.category,
+    required this.group,
   });
 
   final String kind;
   final String label;
   final IconData icon;
   final NodeCategory category;
-}
-
-/// 节点分类分组标签。
-String _categoryLabel(NodeCategory c) {
-  switch (c) {
-    case NodeCategory.variable:
-      return '变量';
-    case NodeCategory.operation:
-      return '运算';
-    case NodeCategory.logic:
-      return '逻辑';
-    case NodeCategory.flow:
-      return '流程';
-    case NodeCategory.function:
-      return '函数';
-    case NodeCategory.database:
-      return '数据库';
-    case NodeCategory.uiControl:
-      return 'UI 控制';
-    case NodeCategory.plugin:
-      return '插件';
-  }
-}
-
-/// 分类分组标题左侧的图标。
-IconData _categoryIcon(NodeCategory c) {
-  switch (c) {
-    case NodeCategory.variable:
-      return Icons.label_outline;
-    case NodeCategory.operation:
-      return Icons.calculate_outlined;
-    case NodeCategory.logic:
-      return Icons.account_tree_outlined;
-    case NodeCategory.flow:
-      return Icons.call_split;
-    case NodeCategory.function:
-      return Icons.functions;
-    case NodeCategory.database:
-      return Icons.storage_outlined;
-    case NodeCategory.uiControl:
-      return Icons.touch_app_outlined;
-    case NodeCategory.plugin:
-      return Icons.extension;
-  }
+  final NodeDisplayGroup group;
 }
 
 /// 按 kind 推断调色板按钮图标（与节点类别语义对齐）。
@@ -1301,24 +1263,24 @@ IconData _iconForKind(String kind, NodeCategory category) {
     case 'plugin_anthropic':
       return Icons.auto_awesome_outlined;
   }
-  // 兜底：plugin_<id> 等市场插件用扩展图标，其余用分类图标。
+  // 兜底：plugin_<id> 等市场插件用扩展图标，其余用展示分组图标。
   if (kind.startsWith('plugin_')) return Icons.extension;
-  return _categoryIcon(category);
+  return displayGroupIcon(displayGroupOf(category));
 }
 
-/// 可折叠的节点分类分组。
+/// 可折叠的节点展示分组。
 ///
-/// 标题行展示分类图标 + 名称 + 节点数 + 折叠箭头；展开时下方横向滚动节点按钮。
-class _PaletteCategoryGroup extends StatelessWidget {
-  const _PaletteCategoryGroup({
-    required this.category,
+/// 标题行展示分组图标 + 名称 + 节点数 + 折叠箭头；展开时下方横向滚动节点按钮。
+class _PaletteGroupWidget extends StatelessWidget {
+  const _PaletteGroupWidget({
+    required this.group,
     required this.entries,
     required this.collapsed,
     required this.onToggle,
     required this.onTapEntry,
   });
 
-  final NodeCategory category;
+  final NodeDisplayGroup group;
   final List<_NodeKindEntry> entries;
   final bool collapsed;
   final VoidCallback onToggle;
@@ -1343,11 +1305,11 @@ class _PaletteCategoryGroup extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
               child: Row(
                 children: [
-                  Icon(_categoryIcon(category),
+                  Icon(displayGroupIcon(group),
                       size: 16, color: cs.primary),
                   const SizedBox(width: 6),
                   Text(
-                    _categoryLabel(category),
+                    displayGroupLabel(group),
                     style: theme.textTheme.labelLarge
                         ?.copyWith(fontWeight: FontWeight.w600),
                   ),
