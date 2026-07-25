@@ -223,52 +223,59 @@ class _CapsuleTabButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
-    final selected = controller.index == index;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: () => controller.animateTo(index),
-        borderRadius: BorderRadius.circular(24),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 260),
-          curve: selected ? Curves.easeOutCubic : Curves.easeInCubic,
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
-          decoration: BoxDecoration(
-            color: selected ? cs.primary : Colors.transparent,
+    // 监听 TabController 的 index 变化，保证 TabBarView 滑动或点击时
+    // 胶囊按钮的选中视觉状态实时同步。
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, child) {
+        final selected = controller.index == index;
+        return Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: () => controller.animateTo(index),
             borderRadius: BorderRadius.circular(24),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TweenAnimationBuilder<double>(
-                tween: Tween<double>(
-                  begin: selected ? 1.0 : 1.06,
-                  end: selected ? 1.06 : 1.0,
-                ),
-                duration: const Duration(milliseconds: 220),
-                curve: selected ? Curves.easeOutCubic : Curves.easeInCubic,
-                builder: (ctx, scale, child) {
-                  return Transform.scale(scale: scale, child: child);
-                },
-                child: Icon(
-                  icon,
-                  size: 18,
-                  color: selected ? cs.onPrimary : cs.onSurfaceVariant,
-                ),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 260),
+              curve: selected ? Curves.easeOutCubic : Curves.easeInCubic,
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+              decoration: BoxDecoration(
+                color: selected ? cs.primary : Colors.transparent,
+                borderRadius: BorderRadius.circular(24),
               ),
-              const SizedBox(width: 6),
-              Text(
-                label,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                  color: selected ? cs.onPrimary : cs.onSurfaceVariant,
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TweenAnimationBuilder<double>(
+                    tween: Tween<double>(
+                      begin: selected ? 1.0 : 1.06,
+                      end: selected ? 1.06 : 1.0,
+                    ),
+                    duration: const Duration(milliseconds: 220),
+                    curve: selected ? Curves.easeOutCubic : Curves.easeInCubic,
+                    builder: (ctx, scale, child) {
+                      return Transform.scale(scale: scale, child: child);
+                    },
+                    child: Icon(
+                      icon,
+                      size: 18,
+                      color: selected ? cs.onPrimary : cs.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
+                      color: selected ? cs.onPrimary : cs.onSurfaceVariant,
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

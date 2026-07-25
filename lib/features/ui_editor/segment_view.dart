@@ -353,11 +353,27 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
       case 'container':
         final color = _parseColor(node.props['color']);
         final padding = (node.props['padding'] as num?)?.toDouble() ?? 0;
+        // 未设置颜色时在编辑器中给容器一个浅灰背景，便于在画布上识别边界；
+        // 用户显式设置颜色后仍优先使用用户颜色。
+        final effectiveColor = color == Colors.transparent
+            ? theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.35)
+            : color;
         return Container(
-          color: color,
+          color: effectiveColor,
           padding: EdgeInsets.all(padding),
           child: node.children.isEmpty
-              ? const SizedBox(width: 64, height: 32)
+              ? SizedBox(
+                  width: 64,
+                  height: 32,
+                  child: Center(
+                    child: Text(
+                      '容器',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                )
               : Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,

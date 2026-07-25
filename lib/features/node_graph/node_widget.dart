@@ -154,47 +154,52 @@ class _NodeCardState extends State<NodeCard>
         : (widget.selected ? cs.primary : cs.outlineVariant);
     final borderWidth = isSource || widget.selected ? 1.5 : 1;
 
-    // 长按放大插值：1.0 → 1.05。
-    final liftScale = 1.0 + 0.05 * _liftAnim.value;
-    // 阴影强度：选中或长按时增强。
-    final lifted = _liftAnim.value > 0.01;
-    final shadowAlpha = widget.selected || lifted ? 0.12 : 0.04;
-    final shadowBlur = widget.selected || lifted ? 14.0 : 6.0;
-
     return ScaleTransition(
       scale: Tween<double>(begin: 0.96, end: 1.0).animate(_appearAnim),
       alignment: Alignment.center,
       child: FadeTransition(
         opacity: Tween<double>(begin: 0.0, end: 1.0).animate(_appearAnim),
-        child: AnimatedScale(
-          scale: liftScale,
-          duration: const Duration(milliseconds: 120),
-          curve: Curves.easeOutCubic,
-          alignment: Alignment.center,
-          child: Material(
-            color: Colors.transparent,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              curve: Curves.easeOutCubic,
-              width: NodeLayout.width,
-              decoration: BoxDecoration(
-                color: cs.surface,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(
-                  color: borderColor,
-                  width: borderWidth.toDouble(),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: shadowAlpha),
-                    blurRadius: shadowBlur,
-                    offset: const Offset(0, 2),
+        // 用 AnimatedBuilder 监听 _liftAnim，确保长按放大动画每一帧都重建，
+        // 避免直接读取 _liftAnim.value 时动画不触发重绘的问题。
+        child: AnimatedBuilder(
+          animation: _liftAnim,
+          builder: (context, child) {
+            // 长按放大插值：1.0 → 1.05。
+            final liftScale = 1.0 + 0.05 * _liftAnim.value;
+            // 阴影强度：选中或长按时增强。
+            final lifted = _liftAnim.value > 0.01;
+            final shadowAlpha = widget.selected || lifted ? 0.12 : 0.04;
+            final shadowBlur = widget.selected || lifted ? 14.0 : 6.0;
+            return Transform.scale(
+              scale: liftScale,
+              alignment: Alignment.center,
+              child: Material(
+                color: Colors.transparent,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeOutCubic,
+                  width: NodeLayout.width,
+                  decoration: BoxDecoration(
+                    color: cs.surface,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: borderColor,
+                      width: borderWidth.toDouble(),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: shadowAlpha),
+                        blurRadius: shadowBlur,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
                   ),
-                ],
+                  child: child,
+                ),
               ),
-              child: _buildBody(theme, cs, isConnect),
-            ),
-          ),
+            );
+          },
+          child: _buildBody(theme, cs, isConnect),
         ),
       ),
     );

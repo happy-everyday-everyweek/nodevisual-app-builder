@@ -28,6 +28,7 @@ windows/flutter/ephemeral/
 test_artifacts/
 web_build/
 web_deploy/
+test-screenshots/
 
 # Secrets
 *.keystore

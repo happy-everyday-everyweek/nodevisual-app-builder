@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer' as developer;
 
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
@@ -54,15 +55,32 @@ class ProjectMarketplaceClient {
 
   /// 拉取项目市场索引。
   ///
-  /// 网络错误时返回空索引（而非抛出），调用方据空状态显示对应 UI。
+  /// 网络错误或非 200 响应时返回空索引（而非抛出），调用方据空状态显示对应 UI。
+  /// 失败原因会输出到日志，便于排查 CORS / 404 / 网络问题。
   Future<ProjectMarketplaceIndex> fetchIndex() async {
-    try {
-      final response = await _httpClient.get(Uri.parse(_projectsIndexRawUrl));
-      if (response.statusCode == 200) {
-        return ProjectMarketplaceIndex.parse(response.body);
+    const maxAttempts = 2;
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        final response = await _httpClient.get(Uri.parse(_projectsIndexRawUrl));
+        if (response.statusCode == 200) {
+          return ProjectMarketplaceIndex.parse(response.body);
+        }
+        developer.log(
+          'projects.json 请求失败 (attempt $attempt): '
+          '${response.statusCode} ${response.reasonPhrase}',
+          name: 'ProjectMarketplaceClient',
+        );
+      } catch (e, st) {
+        developer.log(
+          '拉取 projects.json 失败 (attempt $attempt): $e',
+          name: 'ProjectMarketplaceClient',
+          error: e,
+          stackTrace: st,
+        );
+        if (attempt < maxAttempts) {
+          await Future.delayed(const Duration(milliseconds: 500));
+        }
       }
-    } catch (_) {
-      // 网络错误时返回空索引。
     }
     return const ProjectMarketplaceIndex();
   }
