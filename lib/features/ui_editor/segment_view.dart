@@ -7,8 +7,10 @@ import '../../data/models/port.dart';
 import '../../data/models/project.dart';
 import '../../data/models/ui_tree.dart';
 import '../../data/models/variable_ref.dart';
+import '../marketplace/ui_component_def.dart';
 import '../variables/scope_resolver.dart';
 import '../variables/variable_picker_sheet.dart';
+import 'component_registry.dart';
 import 'ui_editor_providers.dart';
 
 /// UI 段视图：可视化 UI 编辑器。
@@ -306,20 +308,24 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
       case 'text':
         return Text(_displayValue(node, 'content', '文本'));
       case 'button':
-        return ElevatedButton(
-          onPressed: null,
-          child: Text(_displayValue(node, 'label', '按钮')),
+        // IgnorePointer 阻止交互，onPressed 非 null 保持正常配色（不灰）。
+        return IgnorePointer(
+          child: ElevatedButton(
+            onPressed: () {},
+            child: Text(_displayValue(node, 'label', '按钮')),
+          ),
         );
       case 'text_field':
-        return TextField(
-          enabled: false,
-          decoration: InputDecoration(
-            isDense: true,
-            hintText: (node.props['hint'] as String?) ?? '请输入',
-            labelText: (node.props['label'] as String?)?.isNotEmpty == true
-                ? node.props['label'] as String
-                : null,
-            border: const OutlineInputBorder(),
+        return IgnorePointer(
+          child: TextField(
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: (node.props['hint'] as String?) ?? '请输入',
+              labelText: (node.props['label'] as String?)?.isNotEmpty == true
+                  ? node.props['label'] as String
+                  : null,
+              border: const OutlineInputBorder(),
+            ),
           ),
         );
       case 'image':
@@ -435,23 +441,29 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
         final value = (node.props['value'] as num?)?.toDouble() ?? 0.5;
         final min = (node.props['min'] as num?)?.toDouble() ?? 0;
         final max = (node.props['max'] as num?)?.toDouble() ?? 1;
-        return Slider(
-          value: value.clamp(min, max),
-          min: min,
-          max: max,
-          onChanged: null,
+        return IgnorePointer(
+          child: Slider(
+            value: value.clamp(min, max),
+            min: min,
+            max: max,
+            onChanged: (_) {},
+          ),
         );
       case 'switch':
         final value = (node.props['value'] as bool?) ?? false;
-        return Switch(value: value, onChanged: null);
+        return IgnorePointer(
+          child: Switch(value: value, onChanged: (_) {}),
+        );
       case 'checkbox':
         final value = (node.props['value'] as bool?) ?? false;
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Checkbox(value: value, onChanged: null),
-            Text(_displayValue(node, 'label', '')),
-          ],
+        return IgnorePointer(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Checkbox(value: value, onChanged: (_) {}),
+              Text(_displayValue(node, 'label', '')),
+            ],
+          ),
         );
       case 'progress':
         final value = (node.props['value'] as num?)?.toDouble();
@@ -493,26 +505,46 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
                 ),
         );
       case 'tab_container':
-        return Container(
-          constraints: const BoxConstraints(minHeight: 80),
-          decoration: BoxDecoration(
-            border: Border.all(color: theme.colorScheme.outlineVariant),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: node.children.isEmpty
-              ? const Center(child: Text('Tab 容器（子节点为各 Tab 内容）'))
-              : Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TabBar(
-                      tabs: node.children
-                          .map((c) => Tab(
-                              text: (c.props['label'] as String?) ?? 'Tab'))
-                          .toList(),
-                    ),
-                    const SizedBox(height: 40),
-                  ],
+        if (node.children.isEmpty) {
+          return Container(
+            constraints: const BoxConstraints(minHeight: 80),
+            decoration: BoxDecoration(
+              border: Border.all(color: theme.colorScheme.outlineVariant),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: const Center(child: Text('Tab 容器（子节点为各 Tab 内容）')),
+          );
+        }
+        // 用 DefaultTabController 提供 TabController，避免抛
+        // "No TabController for TabBar" 异常导致灰色 ErrorWidget。
+        // 同时补上 TabBarView 真正渲染子节点内容。
+        return DefaultTabController(
+          length: node.children.length,
+          child: Container(
+            constraints: const BoxConstraints(maxHeight: 240),
+            decoration: BoxDecoration(
+              border: Border.all(color: theme.colorScheme.outlineVariant),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TabBar(
+                  tabs: node.children
+                      .map((c) => Tab(
+                          text: (c.props['label'] as String?) ?? 'Tab'))
+                      .toList(),
                 ),
+                Expanded(
+                  child: TabBarView(
+                    children: node.children
+                        .map((c) => _renderNode(theme, c, selectedId))
+                        .toList(growable: false),
+                  ),
+                ),
+              ],
+            ),
+          ),
         );
       case 'card':
         final elevation = (node.props['elevation'] as num?)?.toDouble() ?? 1;
@@ -532,6 +564,22 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
           ),
         );
       default:
+        // 插件提供的 UI 组件：从 ComponentRegistry 查询并占位渲染。
+        //
+        // v1 不实际执行 manifest 中的 renderFn（函数 IR 解释执行需异步，
+        // 不适合在 build 中同步渲染）。此处显示一个占位卡片：插件名 + 类型 +
+        // props 摘要，让用户感知组件存在并能在属性面板配置 props。
+        // 真正的 renderFn 渲染发生在端侧运行时（Web 模板生成）。
+        final pluginEntry = ref
+            .read(componentRegistryProvider)
+            .registry
+            .get(node.type);
+        if (pluginEntry != null) {
+          return _PluginComponentPlaceholder(
+            entry: pluginEntry,
+            node: node,
+          );
+        }
         return const SizedBox.shrink();
     }
   }
@@ -607,7 +655,9 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
     String? parentId;
     if (selectedId != null) {
       final found = mutator.findNode(selectedId);
-      if (found != null && _canHaveChildren(found.node.type)) {
+      final pluginEntries = ref.read(componentRegistryProvider).registry.all();
+      if (found != null &&
+          _canHaveChildrenWithPlugins(found.node.type, pluginEntries)) {
         parentId = selectedId;
       }
     }
@@ -678,11 +728,13 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
   void _showMovePicker(UiNode node) {
     final project = ref.read(uiMutatorProvider);
     if (project == null) return;
+    final pluginEntries = ref.read(componentRegistryProvider).registry.all();
     // 收集所有可作父的容器节点（排除自身及子树）。
     final candidates = <UiNode>[];
     void collect(UiNode n) {
       if (n.id == node.id) return;
-      if (!_isInSubtree(n, node.id) && _canHaveChildren(n.type)) {
+      if (!_isInSubtree(n, node.id) &&
+          _canHaveChildrenWithPlugins(n.type, pluginEntries)) {
         candidates.add(n);
       }
       for (final c in n.children) {
@@ -825,6 +877,113 @@ class _SelectionWrapper extends StatelessWidget {
   }
 }
 
+/// 插件提供的 UI 组件占位渲染。
+///
+/// v1 不在编辑器中实际执行 manifest 中的 renderFn（需要异步函数解释器，
+/// 不适合在 build 中同步调用）。此处给出占位：
+/// - 顶部一行：图标 + 插件组件中文名 + "插件" 标签；
+/// - 中间一行：组件 type（小字 monospace）；
+/// - 底部一行：props 摘要（前 2 项 key=value）。
+///
+/// 用户可在属性面板配置 props，端侧运行时（Web 模板生成）会用 renderFn
+/// 真正渲染该组件。
+class _PluginComponentPlaceholder extends StatelessWidget {
+  const _PluginComponentPlaceholder({
+    required this.entry,
+    required this.node,
+  });
+
+  final UiComponentEntry entry;
+  final UiNode node;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final props = entry.def.props;
+    final summary = props.take(2).map((p) {
+      final v = node.props[p.key];
+      return '${p.label}=${v ?? ''}';
+    }).join(' · ');
+    return Container(
+      width: double.infinity,
+      constraints: const BoxConstraints(minWidth: 120, minHeight: 56),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: cs.secondaryContainer.withValues(alpha: 0.25),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: cs.primary.withValues(alpha: 0.4),
+          width: 0.75,
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(pluginIconFromName(entry.def.icon),
+                  size: 16, color: cs.primary),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  entry.displayName,
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                decoration: BoxDecoration(
+                  color: cs.primaryContainer,
+                  borderRadius: BorderRadius.circular(3),
+                ),
+                child: Text(
+                  '插件',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    fontSize: 9,
+                    color: cs.onPrimaryContainer,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            entry.type,
+            style: theme.textTheme.labelSmall?.copyWith(
+              fontFamily: 'monospace',
+              fontSize: 10,
+              color: cs.onSurfaceVariant,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          if (summary.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              summary,
+              style: theme.textTheme.labelSmall?.copyWith(
+                fontSize: 10,
+                color: cs.onSurfaceVariant,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 // ============================================================================
 // 组件面板
 // ============================================================================
@@ -890,11 +1049,25 @@ const List<_ComponentDef> _componentDefs = [
   _ComponentDef('progress', '进度条', Icons.refresh, false, ComponentCategory.indicator),
 ];
 
-/// 该类型是否可容纳子节点。
+/// 该类型是否可容纳子节点（仅检查内置组件）。
 bool _canHaveChildren(String type) {
   return _componentDefs
       .where((d) => d.type == type)
       .any((d) => d.canHaveChildren);
+}
+
+/// 该类型是否可容纳子节点（合并内置组件 + 插件组件）。
+///
+/// 调用方传入从 provider 读取的 [pluginEntries]，避免顶层函数访问 provider 树。
+bool _canHaveChildrenWithPlugins(
+  String type,
+  List<UiComponentEntry> pluginEntries,
+) {
+  if (_canHaveChildren(type)) return true;
+  for (final entry in pluginEntries) {
+    if (entry.type == type && entry.canHaveChildren) return true;
+  }
+  return false;
 }
 
 /// 该类型是否为容器组件（向子组件注入组件上下文变量）。
@@ -912,15 +1085,17 @@ bool _isContainerComponent(String type) {
   }
 }
 
-/// 组件面板：列出可添加组件，按分类分组。
-class ComponentPanel extends StatelessWidget {
+/// 组件面板：列出可添加组件，按分类分组（内置 + 插件提供）。
+class ComponentPanel extends ConsumerWidget {
   const ComponentPanel({super.key, required this.onPick});
 
   final ValueChanged<String> onPick;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    final pluginEntries =
+        ref.watch(componentRegistryProvider).registry.all();
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
       child: Column(
@@ -931,7 +1106,8 @@ class ComponentPanel extends StatelessWidget {
             child: Text('组件', style: theme.textTheme.titleSmall),
           ),
           for (final cat in ComponentCategory.values)
-            if (_componentDefs.any((d) => d.category == cat)) ...[
+            if (_componentDefs.any((d) => d.category == cat) ||
+                pluginEntries.any((e) => e.category.name == cat.name)) ...[
               _CategoryHeader(label: cat.label, theme: theme),
               Wrap(
                 spacing: 8,
@@ -940,10 +1116,34 @@ class ComponentPanel extends StatelessWidget {
                   for (final def in _componentDefs)
                     if (def.category == cat)
                       _ComponentChip(def: def, onTap: () => onPick(def.type)),
+                  for (final entry in pluginEntries)
+                    if (entry.category.name == cat.name)
+                      _PluginComponentChip(
+                        entry: entry,
+                        onTap: () => onPick(entry.type),
+                      ),
                 ],
               ),
               const SizedBox(height: 4),
             ],
+          // 插件组件中分类不匹配任何内置分类的，归入「插件」分组。
+          if (pluginEntries.any((e) =>
+              !ComponentCategory.values.any((c) => c.name == e.category.name))) ...[
+            _CategoryHeader(label: '插件', theme: theme),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final entry in pluginEntries)
+                  if (!ComponentCategory.values
+                      .any((c) => c.name == entry.category.name))
+                    _PluginComponentChip(
+                      entry: entry,
+                      onTap: () => onPick(entry.type),
+                    ),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -1006,6 +1206,80 @@ class _ComponentChip extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 插件提供的 UI 组件面板项。
+///
+/// 视觉与内置 [_ComponentChip] 对齐，但右上角加一个圆点提示「来自插件」，
+/// 鼠标悬停（Semantics）也透露插件来源。
+class _PluginComponentChip extends StatelessWidget {
+  const _PluginComponentChip({required this.entry, required this.onTap});
+
+  final UiComponentEntry entry;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    return Tooltip(
+      message: '插件组件 · ${entry.pluginId}',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          width: 92,
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            color: cs.secondaryContainer.withValues(alpha: 0.3),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: cs.primary.withValues(alpha: 0.4),
+              width: 0.75,
+            ),
+          ),
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    pluginIconFromName(entry.def.icon),
+                    color: cs.primary,
+                    size: 22,
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    entry.displayName,
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: cs.onSurface,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+              Positioned(
+                top: 4,
+                right: 6,
+                child: Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(
+                    color: cs.primary,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1112,6 +1386,46 @@ List<_PropDescriptor> _propsForType(String type) {
   }
 }
 
+/// 插件组件的属性描述列表（从 [UiComponentDef.props] 映射为 _PropDescriptor）。
+List<_PropDescriptor> _pluginPropsFor(UiComponentEntry entry) {
+  return entry.def.props.map((p) {
+    _PropKind kind;
+    switch (p.kind) {
+      case 'number':
+        kind = _PropKind.number;
+      case 'color':
+        kind = _PropKind.color;
+      case 'dropdown':
+        kind = _PropKind.dropdown;
+      case 'text':
+      default:
+        kind = _PropKind.text;
+    }
+    return _PropDescriptor(
+      p.key,
+      p.label,
+      kind,
+      options: p.options,
+      bindable: p.bindable,
+    );
+  }).toList(growable: false);
+}
+
+/// 合并内置组件 + 插件组件的属性描述。
+List<_PropDescriptor> _propsForTypeWithPlugins(
+  String type,
+  List<UiComponentEntry> pluginEntries,
+) {
+  final builtin = _propsForType(type);
+  if (builtin.isNotEmpty) return builtin;
+  for (final entry in pluginEntries) {
+    if (entry.type == type) {
+      return _pluginPropsFor(entry);
+    }
+  }
+  return const [];
+}
+
 /// 组件支持的触发事件。
 List<String> _eventsForType(String type) {
   const lifecycle = ['onLoad', 'onUnload'];
@@ -1139,6 +1453,52 @@ List<String> _eventsForType(String type) {
   }
 }
 
+/// 合并内置组件 + 插件组件的触发事件列表。
+///
+/// 插件组件的事件来自 manifest 的 [UiComponentDef.events]，并追加
+/// `onLoad` / `onUnload` 生命周期事件（与内置组件一致）。
+List<String> _eventsForTypeWithPlugins(
+  String type,
+  List<UiComponentEntry> pluginEntries,
+) {
+  // 内置组件：直接返回。
+  if (_componentDefs.any((d) => d.type == type)) {
+    return _eventsForType(type);
+  }
+  // 插件组件：取 manifest 声明的事件 + 生命周期。
+  for (final entry in pluginEntries) {
+    if (entry.type == type) {
+      return [...entry.events, 'onLoad', 'onUnload'];
+    }
+  }
+  return _eventsForType(type);
+}
+
+/// 触发事件英文标识 → 中文显示名。
+///
+/// 存储仍使用英文标识（保持数据稳定性），仅在 UI 显示时映射为中文。
+String _eventLabel(String eventName) {
+  const map = <String, String>{
+    'onTap': '点击',
+    'onLongPress': '长按',
+    'onChanged': '值变更',
+    'onSubmitted': '提交',
+    'onFocus': '获得焦点',
+    'onBlur': '失去焦点',
+    'onChangeEnd': '变更结束',
+    'onToggle': '切换',
+    'onItemTap': '点击列表项',
+    'onScroll': '滚动',
+    'onTabChange': 'Tab 切换',
+    'onLoad': '加载',
+    'onUnload': '卸载',
+    'onDispose': '页面销毁',
+    'onResume': '恢复',
+    'onPause': '暂停',
+  };
+  return map[eventName] ?? eventName;
+}
+
 /// 属性面板：选中组件后显示属性编辑 + 绑定 + 触发点。
 class PropertiesPanel extends ConsumerWidget {
   const PropertiesPanel({super.key, required this.node});
@@ -1149,6 +1509,17 @@ class PropertiesPanel extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final project = ref.watch(uiMutatorProvider);
+    final pluginEntries =
+        ref.watch(componentRegistryProvider).registry.all();
+    final props = _propsForTypeWithPlugins(node.type, pluginEntries);
+    final events = _eventsForTypeWithPlugins(node.type, pluginEntries);
+    // 插件组件的中文展示名（若是插件组件）。
+    final pluginEntry = pluginEntries
+        .where((e) => e.type == node.type)
+        .firstOrNull;
+    final titleText = pluginEntry != null
+        ? '${pluginEntry.displayName} · ${node.id.substring(0, 6)}'
+        : '${node.type} · ${node.id.substring(0, 6)}';
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
       child: Column(
@@ -1160,7 +1531,7 @@ class PropertiesPanel extends ConsumerWidget {
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  '${node.type} · ${node.id.substring(0, 6)}',
+                  titleText,
                   style: theme.textTheme.titleSmall,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -1178,7 +1549,7 @@ class PropertiesPanel extends ConsumerWidget {
           ),
           const Divider(),
           // 属性编辑
-          for (final desc in _propsForType(node.type)) ...[
+          for (final desc in props) ...[
             _PropEditor(
               key: ValueKey('${node.id}:${desc.key}'),
               node: node,
@@ -1186,7 +1557,7 @@ class PropertiesPanel extends ConsumerWidget {
             ),
             const SizedBox(height: 8),
           ],
-          if (_propsForType(node.type).isEmpty)
+          if (props.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Text(
@@ -1202,7 +1573,7 @@ class PropertiesPanel extends ConsumerWidget {
             child: Text('触发事件', style: theme.textTheme.titleSmall),
           ),
           if (project != null)
-            for (final event in _eventsForType(node.type))
+            for (final event in events)
               _TriggerEditor(
                 key: ValueKey('${node.id}:$event'),
                 node: node,
@@ -1680,7 +2051,7 @@ class _TriggerEditor extends ConsumerWidget {
         children: [
           Expanded(
             flex: 2,
-            child: Text(eventName, style: theme.textTheme.bodyMedium),
+            child: Text(_eventLabel(eventName), style: theme.textTheme.bodyMedium),
           ),
           Expanded(
             flex: 3,
@@ -1942,7 +2313,7 @@ class _PageEventRow extends ConsumerWidget {
         children: [
           SizedBox(
             width: 80,
-            child: Text(event, style: theme.textTheme.bodySmall),
+            child: Text(_eventLabel(event), style: theme.textTheme.bodySmall),
           ),
           Expanded(
             child: DropdownButtonFormField<String>(

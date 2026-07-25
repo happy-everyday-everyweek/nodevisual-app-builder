@@ -8,6 +8,8 @@ import '../../data/models/function_def.dart';
 import '../../data/models/node.dart';
 import '../build_pipeline/build_target.dart';
 import '../marketplace/marketplace_providers.dart';
+import '../marketplace/plugin_function_validator.dart';
+import '../marketplace/plugin_manifest.dart';
 import 'connection_painter.dart';
 import 'dag_validator.dart';
 import 'graph_providers.dart';
@@ -106,6 +108,12 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
   /// 计算所有节点的端口画布坐标映射。
   ///
   /// 键：[portKey] 结果（输出端口）或 `nodeId:in`（入口端口）。
+  ///
+  /// 端口位置规则（与 [NodeLayout] 契约一致）：
+  /// - 入口端口：头部左侧中点。
+  /// - 单输出节点（含 `branch` 子节点）：头部右侧中点。
+  /// - 母节点（`controlOutputs.length >= 2` 且非 `branch`）：头部底部中央，
+  ///   多个端口共用同一位置，连线自然向下方各 `branch` 子节点分散。
   Map<String, Offset> _computePortPositions(List<Node> nodes) {
     final result = <String, Offset>{};
     for (final node in nodes) {
@@ -113,10 +121,25 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
       final inOffset = NodeLayout.inputPortOffset();
       result['${node.id}:$inputPortSuffix'] =
           Offset(origin.x + inOffset.dx, origin.y + inOffset.dy);
-      for (var i = 0; i < node.controlOutputs.length; i++) {
-        final off = NodeLayout.outputPortOffset(i);
-        result[portKey(node.id, node.controlOutputs[i].name)] =
-            Offset(origin.x + off.dx, origin.y + off.dy);
+
+      final isMultiOutputParent =
+          node.controlOutputs.length >= 2 && node.kind != 'branch';
+      if (isMultiOutputParent) {
+        final annotationHeight =
+            node.annotation.isNotEmpty ? NodeLayout.annotationRowHeight : 0.0;
+        final off = NodeLayout.multiOutputPortOffset(annotationHeight);
+        for (final port in node.controlOutputs) {
+          result[portKey(node.id, port.name)] =
+              Offset(origin.x + off.dx, origin.y + off.dy);
+        }
+      } else {
+        // 单输出节点：所有控制流输出端口共用头部右侧中点
+        // （通常只有一个 next，但兼容多端口共用同一位置）。
+        final off = NodeLayout.singleOutputPortOffset();
+        for (final port in node.controlOutputs) {
+          result[portKey(node.id, port.name)] =
+              Offset(origin.x + off.dx, origin.y + off.dy);
+        }
       }
     }
     return result;
@@ -130,13 +153,46 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
       final w = node.position.x + NodeLayout.width;
       final h = node.position.y +
           NodeLayout.nodeHeight(
-            controlOutputCount: node.controlOutputs.length,
-            dataOutputCount: node.dataOutputs.length,
+            hasAnnotation: node.annotation.isNotEmpty,
           );
       if (w > maxX) maxX = w;
       if (h > maxY) maxY = h;
     }
     return Size(maxX + 200, maxY + 200);
+  }
+
+  /// 计算节点的子母关联标签（用于 NodeCard 头部小标签）。
+  ///
+  /// 规则：
+  /// - `branch` 子节点：显示"属于: 母节点名"——母节点名优先取 params.name，
+  ///   其次取 NodeKindRegistry 的中文 displayName，最后回退到 kind。
+  /// - 母节点（`controlOutputs.length >= 2` 且非 `branch`）：显示
+  ///   "分支: 端口1、端口2"——列出所有控制流输出端口名。
+  /// - 单输出节点（含单输出 branch 子节点）：返回 null（不显示标签）。
+  String? _computeRelatedLabel(Node node, FunctionDef fn) {
+    if (node.kind == 'branch') {
+      final parentId = node.params['parentId']?.toString() ?? '';
+      if (parentId.isEmpty) return null;
+      Node? parent;
+      for (final n in fn.nodes) {
+        if (n.id == parentId) {
+          parent = n;
+          break;
+        }
+      }
+      if (parent == null) return null;
+      final parentName = parent.params['name']?.toString().trim();
+      final displayName = (parentName != null && parentName.isNotEmpty)
+          ? parentName
+          : (NodeKindRegistry.getSpec(parent.kind)?.displayName ??
+              parent.kind);
+      return '属于: $displayName';
+    }
+    if (node.controlOutputs.length >= 2) {
+      final portNames = node.controlOutputs.map((p) => p.name).join('、');
+      return '分支: $portNames';
+    }
+    return null;
   }
 
   // ---- 节点交互 ----
@@ -490,6 +546,11 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
             tooltip: '校验图',
             onPressed: () => _showValidation(fn),
           ),
+          IconButton(
+            icon: const Icon(Icons.publish_outlined),
+            tooltip: '发布为插件',
+            onPressed: () => _showPublishAsPluginSheet(fn),
+          ),
         ],
       ),
       body: SafeArea(
@@ -602,6 +663,7 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
                       _onNodeDragUpdate(node.id, details),
                   onConnectTap: _onNodeConnectTap,
                   isConnectionSource: node.id == _connectSourceNode,
+                  relatedLabel: _computeRelatedLabel(node, fn),
                 ),
               ),
           ],
@@ -883,6 +945,22 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
       isScrollControlled: true,
       showDragHandle: true,
       builder: (ctx) => _FunctionTriggerSheet(initial: fn),
+    );
+  }
+
+  /// 打开"发布为插件"面板。
+  ///
+  /// 用户可通过函数编辑器将当前函数发布为一个本地插件。发布前会校验
+  /// 函数是否符合插件要求（禁用项目变量、数据库、UI 控制、函数调用、
+  /// 定时器/外部触发器等依赖项目上下文的节点）。校验通过后，用户填写
+  /// 插件元数据（展示名、描述、版本、作者、分类），点击"安装到本地"
+  /// 即可将函数 IR 嵌入 PluginManifest 并保存到已安装插件列表。
+  void _showPublishAsPluginSheet(FunctionDef fn) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) => _PublishAsPluginSheet(function: fn),
     );
   }
 }
@@ -1546,6 +1624,437 @@ class _CurrentEntryCard extends StatelessWidget {
               tooltip: '清除触发器',
               onPressed: onClear,
             ),
+        ],
+      ),
+    );
+  }
+}
+
+/// "发布为插件"面板。
+///
+/// 用户通过函数编辑器将当前函数发布为本地插件。流程：
+/// 1. 校验函数是否符合插件要求（[PluginFunctionValidator]）；
+/// 2. 用户填写插件元数据（展示名、描述、版本、作者、分类）；
+/// 3. 点击"安装到本地"，将函数 IR 嵌入 [PluginManifest] 并保存到
+///    已安装插件列表（[InstalledPluginsNotifier] 触发重载）。
+///
+/// 函数的入参/出参签名自动映射为插件的输入/输出端口。
+class _PublishAsPluginSheet extends ConsumerStatefulWidget {
+  const _PublishAsPluginSheet({required this.function});
+
+  final FunctionDef function;
+
+  @override
+  ConsumerState<_PublishAsPluginSheet> createState() =>
+      _PublishAsPluginSheetState();
+}
+
+class _PublishAsPluginSheetState extends ConsumerState<_PublishAsPluginSheet> {
+  late final TextEditingController _displayNameController;
+  late final TextEditingController _descriptionController;
+  late final TextEditingController _versionController;
+  late final TextEditingController _authorController;
+  late final TextEditingController _idController;
+  String _category = 'general';
+  bool _installing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _displayNameController =
+        TextEditingController(text: widget.function.name);
+    _descriptionController = TextEditingController();
+    _versionController = TextEditingController(text: '1.0.0');
+    _authorController = TextEditingController();
+    // 插件 id：默认基于函数名 slugify，用户可修改。
+    _idController =
+        TextEditingController(text: _slugify(widget.function.name));
+  }
+
+  @override
+  void dispose() {
+    _displayNameController.dispose();
+    _descriptionController.dispose();
+    _versionController.dispose();
+    _authorController.dispose();
+    _idController.dispose();
+    super.dispose();
+  }
+
+  /// 简单 slugify：小写化 + 非字母数字替换为下划线。
+  String _slugify(String name) {
+    final slug = name
+        .toLowerCase()
+        .replaceAll(RegExp(r'[^a-z0-9]+'), '_')
+        .replaceFirst(RegExp(r'^_+'), '')
+        .replaceFirst(RegExp(r'_+$'), '');
+    return slug.isEmpty ? 'function_plugin' : slug;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final fn = widget.function;
+    final validationResult = PluginFunctionValidator.validate(fn);
+
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('发布为插件', style: theme.textTheme.titleLarge),
+              const SizedBox(height: 4),
+              Text(
+                '将当前函数发布为本地插件。函数的入参/出参会自动映射为'
+                '插件的输入/输出端口。安装后可在任何项目中作为插件节点使用。',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 16),
+              // 校验结果
+              if (!validationResult.isValid) ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.errorContainer
+                        .withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.warning_amber,
+                              color: theme.colorScheme.error, size: 20),
+                          const SizedBox(width: 8),
+                          Text('校验未通过（${validationResult.problems.length} 个问题）',
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                color: theme.colorScheme.error,
+                              )),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      ...validationResult.problems.map(
+                        (p) => Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 2),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('• '),
+                              Expanded(child: Text(p.message)),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '请修改函数后重试。插件函数禁用：项目变量、数据库、'
+                        'UI 控制、函数调用、定时器/外部触发器。',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ] else ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.primaryContainer
+                        .withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.check_circle,
+                          color: theme.colorScheme.primary, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text('校验通过，可以发布为插件',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: theme.colorScheme.primary,
+                            )),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+              // 端口预览
+              _PortPreview(fn: fn),
+              const SizedBox(height: 16),
+              // 元数据表单
+              TextField(
+                controller: _idController,
+                decoration: const InputDecoration(
+                  labelText: '插件 ID（唯一标识）',
+                  hintText: '小写字母/数字/下划线',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.tag, size: 18),
+                ),
+                enabled: validationResult.isValid && !_installing,
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _displayNameController,
+                decoration: const InputDecoration(
+                  labelText: '展示名',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.label, size: 18),
+                ),
+                enabled: validationResult.isValid && !_installing,
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _descriptionController,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  labelText: '描述',
+                  hintText: '描述这个插件的功能...',
+                  border: OutlineInputBorder(),
+                  alignLabelWithHint: true,
+                ),
+                enabled: validationResult.isValid && !_installing,
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _versionController,
+                      decoration: const InputDecoration(
+                        labelText: '版本',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.history, size: 18),
+                      ),
+                      enabled: validationResult.isValid && !_installing,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: _authorController,
+                      decoration: const InputDecoration(
+                        labelText: '作者',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.person, size: 18),
+                      ),
+                      enabled: validationResult.isValid && !_installing,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                value: _category,
+                decoration: const InputDecoration(
+                  labelText: '分类',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.category, size: 18),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'general', child: Text('通用')),
+                  DropdownMenuItem(value: 'ai', child: Text('AI')),
+                  DropdownMenuItem(value: 'http', child: Text('网络')),
+                  DropdownMenuItem(value: 'tool', child: Text('工具')),
+                  DropdownMenuItem(value: 'translate', child: Text('翻译')),
+                  DropdownMenuItem(value: 'image', child: Text('图像')),
+                ],
+                onChanged: validationResult.isValid && !_installing
+                    ? (v) => setState(() => _category = v ?? 'general')
+                    : null,
+              ),
+              const SizedBox(height: 20),
+              // 安装按钮
+              if (_installing)
+                const Center(child: CircularProgressIndicator())
+              else
+                FilledButton.icon(
+                  onPressed: validationResult.isValid ? _install : null,
+                  icon: const Icon(Icons.download),
+                  label: const Text('安装到本地'),
+                ),
+              const SizedBox(height: 8),
+              Text(
+                '说明：函数插件目前仅支持安装到本地。安装后会出现在"已安装"列表，'
+                '可在其他项目中作为插件节点使用。函数 IR 嵌入在插件清单中，'
+                '运行时由函数执行器解释执行。',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 构造 PluginManifest 并安装到本地。
+  Future<void> _install() async {
+    final fn = widget.function;
+    final id = _idController.text.trim();
+    if (id.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('请填写插件 ID')),
+      );
+      return;
+    }
+
+    setState(() => _installing = true);
+    try {
+      // 构造函数执行器定义（嵌入函数 IR）。
+      // 清除 entry 字段：插件函数只能被显式调用，不应保留原触发器。
+      final functionJson = fn.copyWith().toJson();
+      functionJson.remove('entry');
+
+      final manifest = PluginManifest(
+        id: id,
+        displayName: _displayNameController.text.trim().isEmpty
+            ? fn.name
+            : _displayNameController.text.trim(),
+        description: _descriptionController.text.trim(),
+        version: _versionController.text.trim().isEmpty
+            ? '1.0.0'
+            : _versionController.text.trim(),
+        author: _authorController.text.trim().isEmpty
+            ? 'unknown'
+            : _authorController.text.trim(),
+        category: _category,
+        // 函数入参/出参签名映射为插件端口。
+        inputs: fn.inputs
+            .map((p) => ManifestInput(
+                  name: p.name,
+                  type: p.type,
+                  required: p.defaultValue == null,
+                  description: p.description ?? '',
+                ))
+            .toList(),
+        outputs: fn.outputs
+            .map((p) => ManifestOutput(
+                  name: p.name,
+                  type: p.type,
+                  description: p.description ?? '',
+                ))
+            .toList(),
+        configSchema: const [],
+        executor: const HttpExecutorDef(method: 'GET', url: ''),
+        executorType: 'function',
+        functionDef: FunctionExecutorDef(function: functionJson),
+        sourceRepoUrl: '',
+        installedAt: DateTime.now().toIso8601String(),
+      );
+
+      // 直接保存到已安装插件存储。
+      final store = ref.read(installedPluginStoreProvider);
+      await store.save(manifest);
+
+      // 通过 invalidate 已安装列表 provider 触发重新加载与注册。
+      ref.invalidate(installedPluginsProvider);
+
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('已安装插件 ${manifest.displayName}')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('安装失败: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _installing = false);
+    }
+  }
+}
+
+/// 端口预览：展示函数的入参/出参签名。
+class _PortPreview extends StatelessWidget {
+  const _PortPreview({required this.fn});
+
+  final FunctionDef fn;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('端口映射（函数签名 → 插件端口）',
+                style: theme.textTheme.labelMedium),
+            const SizedBox(height: 8),
+            if (fn.inputs.isEmpty && fn.outputs.isEmpty)
+              Text('函数无显式签名。运行时按旧式单返回值 `value` 输出。',
+                  style: theme.textTheme.bodySmall)
+            else ...[
+              if (fn.inputs.isNotEmpty) ...[
+                Text('输入', style: theme.textTheme.labelSmall),
+                const SizedBox(height: 4),
+                ...fn.inputs.map((p) => _PortChip(
+                      name: p.name,
+                      type: p.type.toJson(),
+                    )),
+              ],
+              if (fn.outputs.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Text('输出', style: theme.textTheme.labelSmall),
+                const SizedBox(height: 4),
+                ...fn.outputs.map((p) => _PortChip(
+                      name: p.name,
+                      type: p.type.toJson(),
+                    )),
+              ],
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PortChip extends StatelessWidget {
+  const _PortChip({required this.name, required this.type});
+
+  final String name;
+  final String type;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.tertiaryContainer.withValues(alpha: 0.4),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(name,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  fontFamily: 'monospace',
+                )),
+          ),
+          const SizedBox(width: 6),
+          Text(type,
+              style: theme.textTheme.labelSmall?.copyWith(
+                fontSize: 10,
+                color: theme.colorScheme.onSurfaceVariant,
+                fontFamily: 'monospace',
+              )),
         ],
       ),
     );

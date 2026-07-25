@@ -9,6 +9,8 @@ import '../build_pipeline/build_artifact.dart';
 import '../build_pipeline/build_providers.dart';
 import '../build_pipeline/build_result.dart';
 import '../build_pipeline/build_target.dart';
+import '../marketplace/marketplace_providers.dart';
+import '../marketplace/project_marketplace_entry.dart';
 import '../project/project_providers.dart';
 import 'publish_providers.dart';
 
@@ -861,6 +863,12 @@ class _DistributeStep extends ConsumerWidget {
                 ),
               ),
             ],
+            const SizedBox(height: 16),
+            // 发布到市场（前置：已发布到 GitHub）
+            _PublishToMarketCard(
+              targetSemver: targetSemver,
+              notes: notesController.text.trim(),
+            ),
           ],
         ),
       ),
@@ -1016,5 +1024,277 @@ class _GithubAuthCard extends ConsumerWidget {
         ],
       ),
     );
+  }
+}
+
+// ---- 发布到市场 ----
+
+/// 发布项目到市场卡片。
+///
+/// 前置条件：项目已发布到 GitHub（[Project.meta.githubRepoUrl] 非空）。
+/// 点击"发布到市场"后，会自动 fork 上游 marketplace 仓库、更新 projects.json、
+/// 创建 PR。PR 合并后，其他用户可在市场"项目"栏目克隆本项目。
+///
+/// 标签输入：用户可为项目添加分类标签（逗号分隔），用于市场搜索。
+class _PublishToMarketCard extends ConsumerStatefulWidget {
+  const _PublishToMarketCard({
+    required this.targetSemver,
+    required this.notes,
+  });
+
+  final String targetSemver;
+  final String notes;
+
+  @override
+  ConsumerState<_PublishToMarketCard> createState() =>
+      _PublishToMarketCardState();
+}
+
+class _PublishToMarketCardState extends ConsumerState<_PublishToMarketCard> {
+  final TextEditingController _tagsController = TextEditingController();
+
+  @override
+  void dispose() {
+    _tagsController.dispose();
+    super.dispose();
+  }
+
+  /// 根据项目元数据 + 用户输入标签构造市场条目。
+  ProjectMarketplaceEntry _buildEntry(Project project, String authorLogin) {
+    final tags = _tagsController.text
+        .split(',')
+        .map((t) => t.trim())
+        .where((t) => t.isNotEmpty)
+        .toList();
+    // 解析 GitHub repo owner/repo 作为 id。
+    final repoUrl = project.meta.githubRepoUrl!;
+    final match = RegExp(r'github\.com/([^/]+)/([^/]+)/?').firstMatch(repoUrl);
+    final id = match != null
+        ? '${match.group(1)}/${match.group(2)}'
+        : project.meta.id;
+    return ProjectMarketplaceEntry(
+      id: id,
+      name: project.meta.name,
+      description: project.meta.description ?? '',
+      author: authorLogin,
+      version: widget.targetSemver,
+      repoUrl: repoUrl,
+      branch: 'main',
+      tags: tags,
+      icon: 'folder',
+      stars: 0,
+      updatedAt: DateTime.now().toIso8601String(),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final project = ref.watch(currentProjectProvider);
+    final auth = ref.watch(githubAuthProvider);
+    final marketState = ref.watch(publishProjectToMarketProvider);
+
+    final hasPublishedToGithub = project?.meta.githubRepoUrl != null;
+    final isAuthenticated = auth is GithubAuthAuthenticated;
+    final isRunning = marketState is PublishProjectToMarketRunning;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.storefront_outlined,
+                    size: 20, color: theme.colorScheme.primary),
+                const SizedBox(width: 8),
+                Text('发布到市场', style: theme.textTheme.titleMedium),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '将本项目作为模板发布到 NodeVisual 市场"项目"栏目。'
+              '其他用户可克隆本项目作为起点。'
+              '流程：自动 fork 市场仓库 → 更新 projects.json → 创建 PR，'
+              'PR 合并后项目即可在市场中被发现。',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 12),
+            // 前置条件提示
+            if (!hasPublishedToGithub) ...[
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.errorContainer.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.warning_amber,
+                        size: 16, color: theme.colorScheme.error),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '前置条件未满足：请先在上方"分发"步骤发布到 GitHub。',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.error,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+            ] else if (!isAuthenticated) ...[
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.errorContainer.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.warning_amber,
+                        size: 16, color: theme.colorScheme.error),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '请先连接 GitHub 账号。',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.error,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+            // 标签输入
+            TextField(
+              controller: _tagsController,
+              decoration: const InputDecoration(
+                isDense: true,
+                labelText: '分类标签（可选）',
+                hintText: '逗号分隔，如：工具,游戏,教育',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.label_outline, size: 18),
+              ),
+              enabled: hasPublishedToGithub && isAuthenticated && !isRunning,
+            ),
+            const SizedBox(height: 12),
+            // 发布按钮 + 状态
+            switch (marketState) {
+              PublishProjectToMarketIdle() => FilledButton.tonalIcon(
+                  onPressed: (hasPublishedToGithub && isAuthenticated)
+                      ? _doPublish
+                      : null,
+                  icon: const Icon(Icons.cloud_upload_outlined),
+                  label: const Text('发布到市场'),
+                ),
+              PublishProjectToMarketRunning(:final phase) => Row(
+                  children: [
+                    const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        '$phase …',
+                        style: theme.textTheme.bodyMedium,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              PublishProjectToMarketDone(:final prUrl) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.check_circle,
+                            color: theme.colorScheme.primary, size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text('已创建 PR，等待市场仓库维护者合并',
+                              style: theme.textTheme.bodyMedium),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        OutlinedButton.icon(
+                          onPressed: () => launchUrl(Uri.parse(prUrl)),
+                          icon: const Icon(Icons.open_in_new, size: 18),
+                          label: const Text('查看 PR'),
+                        ),
+                        TextButton(
+                          onPressed: () => ref
+                              .read(publishProjectToMarketProvider.notifier)
+                              .reset(),
+                          child: const Text('再来一次'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              PublishProjectToMarketError(:final message) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.errorContainer
+                            .withValues(alpha: 0.3),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.error_outline,
+                              size: 16, color: theme.colorScheme.error),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: SelectableText(
+                              message,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.error,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextButton(
+                      onPressed: () => ref
+                          .read(publishProjectToMarketProvider.notifier)
+                          .reset(),
+                      child: const Text('重置'),
+                    ),
+                  ],
+                ),
+            },
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _doPublish() async {
+    final project = ref.read(currentProjectProvider);
+    final auth = ref.read(githubAuthProvider);
+    if (project == null || project.meta.githubRepoUrl == null) return;
+    if (auth is! GithubAuthAuthenticated) return;
+
+    final entry = _buildEntry(project, auth.user.login);
+    await ref.read(publishProjectToMarketProvider.notifier).publish(entry);
   }
 }

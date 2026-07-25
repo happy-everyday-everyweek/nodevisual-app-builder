@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 
 import '../../data/models/node.dart';
-import '../../data/models/port.dart';
+import 'node_kinds.dart';
 import 'node_layout.dart';
 
 /// 编辑器交互模式。
 enum NodeEditorMode {
-  /// 指针：移动节点 / 平移画布，节点拖到屏幕边缘时画布自动跟随。
+  /// 指针：长按节点放大后拖拽移动 / 单击平移画布，节点拖到屏幕边缘时画布自动跟随。
   pointer,
 
   /// 连线：点击起始节点 → 点击终止节点建立控制流连线。
@@ -20,20 +20,21 @@ enum NodeEditorMode {
   add,
 }
 
-/// 节点卡片渲染（双平面模型的"控制平面 + 数据输出展示"）。
+/// 节点卡片渲染（简化版）。
 ///
-/// 视觉布局（与 [NodeLayout] 常量对齐）：
-/// ```
-///  kind · name                   <- 头部 (36px)
-///        outName1                  <- 控制流输出行 (24px each)
-///        outName2
-/// ─────────────────────────
-/// result  [number]                <- 数据输出展示行 (20px each, 只读)
-/// rows    [list]
-/// ```
+/// **显示简化**：节点卡片只渲染头部（图标 + 名称 + 关联标签 + 删除按钮）
+/// 和可选注释行。不再渲染控制流输出行 / 数据输出行 / 类型 chip
+/// （节点系统已统一为单输入单输出，多输出由子母节点表达）。
 ///
-/// 无端口圆点：连线交互由 [NodeEditorMode.connect] 模式下两步点击完成
-/// （先点击起始节点，再点击终止节点）。连线仅表达执行顺序，不参与参数传递。
+/// **中文名**：节点名称优先取 `params.name`，其次取 [NodeKindRegistry]
+/// 中 [NodeKindSpec.displayName]（中文），最后回退到 `kind`。
+///
+/// **子母节点关联标签**：
+/// - `branch` 子节点：显示所属母节点名称（"属于: 母节点名"）。
+/// - 母节点（`controlOutputs.length >= 2`）：显示分支出口（"分支: 则、否则"）。
+///
+/// **指针模式长按拖拽**：长按节点后节点放大 1.05 倍 + 阴影增强，
+/// 进入可拖拽状态，松手还原。单击仍打开节点编辑页。
 class NodeCard extends StatefulWidget {
   const NodeCard({
     super.key,
@@ -46,6 +47,7 @@ class NodeCard extends StatefulWidget {
     this.onDragUpdate,
     this.onConnectTap,
     this.isConnectionSource = false,
+    this.relatedLabel,
   });
 
   /// 节点数据。
@@ -67,25 +69,34 @@ class NodeCard extends StatefulWidget {
   final VoidCallback? onDelete;
 
   /// 节点拖拽更新回调（指针模式下移动节点）。
-  final ValueChanged<DragUpdateDetails>? onDragUpdate;
+  ///
+  /// 参数为视口坐标增量（已扣除缩放前的 raw delta）。
+  final ValueChanged<Offset>? onDragUpdate;
 
   /// 连线模式：点击该节点（参数：节点 id）。
-  ///
-  /// 由父组件决定是"作为起始节点选中"还是"作为终止节点建立连线"。
-  /// 多输出母节点（if / loop 等）由父组件拦截并提示用户改点对应的子节点。
   final ValueChanged<String>? onConnectTap;
 
   /// 连线模式下是否为当前选中的起始节点（高亮）。
   final bool isConnectionSource;
+
+  /// 子母节点关联标签（由父组件计算传入，如"属于: if判断"或"分支: 则、否则"）。
+  final String? relatedLabel;
 
   @override
   State<NodeCard> createState() => _NodeCardState();
 }
 
 class _NodeCardState extends State<NodeCard>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   late final AnimationController _appear;
   late final Animation<double> _appearAnim;
+
+  /// 长按"抬起"动画：1.0 → 1.05 放大 + 阴影增强。
+  late final AnimationController _lift;
+  late final Animation<double> _liftAnim;
+
+  /// 长按拖拽过程中累计的上一次触点位置（视口坐标），用于计算 delta。
+  Offset? _lastLongPressPosition;
 
   @override
   void initState() {
@@ -101,17 +112,32 @@ class _NodeCardState extends State<NodeCard>
       reverseCurve: Curves.easeInCubic,
     );
     _appear.forward();
+
+    _lift = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 120),
+    );
+    _liftAnim = CurvedAnimation(
+      parent: _lift,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
   }
 
   @override
   void dispose() {
     _appear.dispose();
+    _lift.dispose();
     super.dispose();
   }
 
+  /// 节点显示名称：优先 params.name，其次 NodeKindRegistry displayName（中文），
+  /// 最后回退到 kind。
   String get _displayName {
     final name = widget.node.params['name'];
     if (name is String && name.trim().isNotEmpty) return name.trim();
+    final spec = NodeKindRegistry.getSpec(widget.node.kind);
+    if (spec != null && spec.displayName.isNotEmpty) return spec.displayName;
     return widget.node.kind;
   }
 
@@ -128,34 +154,46 @@ class _NodeCardState extends State<NodeCard>
         : (widget.selected ? cs.primary : cs.outlineVariant);
     final borderWidth = isSource || widget.selected ? 1.5 : 1;
 
+    // 长按放大插值：1.0 → 1.05。
+    final liftScale = 1.0 + 0.05 * _liftAnim.value;
+    // 阴影强度：选中或长按时增强。
+    final lifted = _liftAnim.value > 0.01;
+    final shadowAlpha = widget.selected || lifted ? 0.12 : 0.04;
+    final shadowBlur = widget.selected || lifted ? 14.0 : 6.0;
+
     return ScaleTransition(
       scale: Tween<double>(begin: 0.96, end: 1.0).animate(_appearAnim),
       alignment: Alignment.center,
       child: FadeTransition(
         opacity: Tween<double>(begin: 0.0, end: 1.0).animate(_appearAnim),
-        child: Material(
-          color: Colors.transparent,
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOutCubic,
-            width: NodeLayout.width,
-            decoration: BoxDecoration(
-              color: cs.surface,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: borderColor,
-                width: borderWidth,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(
-                      alpha: widget.selected ? 0.10 : 0.04,),
-                  blurRadius: widget.selected ? 12 : 6,
-                  offset: const Offset(0, 2),
+        child: AnimatedScale(
+          scale: liftScale,
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.center,
+          child: Material(
+            color: Colors.transparent,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOutCubic,
+              width: NodeLayout.width,
+              decoration: BoxDecoration(
+                color: cs.surface,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: borderColor,
+                  width: borderWidth,
                 ),
-              ],
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: shadowAlpha),
+                    blurRadius: shadowBlur,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: _buildBody(theme, cs, isConnect),
             ),
-            child: _buildBody(theme, cs, isConnect),
           ),
         ),
       ),
@@ -164,8 +202,6 @@ class _NodeCardState extends State<NodeCard>
 
   Widget _buildBody(ThemeData theme, ColorScheme cs, bool isConnect) {
     // 连线模式：单击作为起始或终止节点（两步点击式连线）。
-    // 多输出母节点（if / loop 等）由父组件 onConnectTap 拦截并提示用户
-    // 改点对应的 branch 子节点作为起点。
     if (isConnect) {
       return GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -176,37 +212,50 @@ class _NodeCardState extends State<NodeCard>
       );
     }
 
-    // 指针模式：单击打开编辑器 + 长按选中 + 拖拽移动。
+    // 指针模式：单击打开编辑器；长按放大并进入拖拽，松手还原。
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () {
         widget.onSelect?.call();
         widget.onOpenEditor?.call();
       },
-      onLongPress: widget.onSelect,
-      onPanUpdate: widget.onDragUpdate,
+      onLongPressStart: (details) {
+        widget.onSelect?.call();
+        _lastLongPressPosition = details.globalPosition;
+        _lift.forward();
+      },
+      onLongPressMoveUpdate: (details) {
+        final last = _lastLongPressPosition;
+        _lastLongPressPosition = details.globalPosition;
+        if (last == null || widget.onDragUpdate == null) return;
+        final delta = details.globalPosition - last;
+        if (delta != Offset.zero) widget.onDragUpdate!(delta);
+      },
+      onLongPressEnd: (_) {
+        _lastLongPressPosition = null;
+        _lift.reverse();
+      },
       child: _buildColumn(theme, cs),
     );
   }
 
   Widget _buildColumn(ThemeData theme, ColorScheme cs) {
+    final hasAnnotation = widget.node.annotation.isNotEmpty;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
         _buildHeader(theme, cs),
-        for (var i = 0; i < widget.node.controlOutputs.length; i++)
-          _buildOutputRow(theme, cs, widget.node.controlOutputs[i].name),
-        if (widget.node.dataOutputs.isNotEmpty)
-          _buildDataSection(theme, cs),
+        if (hasAnnotation) _buildAnnotation(theme, cs),
       ],
     );
   }
 
   Widget _buildHeader(ThemeData theme, ColorScheme cs) {
+    final related = widget.relatedLabel;
     return Container(
       height: NodeLayout.headerHeight,
-      padding: const EdgeInsets.only(left: 16, right: 8),
+      padding: const EdgeInsets.only(left: 12, right: 6),
       decoration: BoxDecoration(
         color: cs.surfaceContainerHigh,
         borderRadius: const BorderRadius.only(
@@ -229,101 +278,64 @@ class _NodeCardState extends State<NodeCard>
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          const SizedBox(width: 4),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-            decoration: BoxDecoration(
-              color: cs.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              widget.node.kind,
-              style: theme.textTheme.labelSmall?.copyWith(
-                fontSize: 10,
-                fontFamily: 'monospace',
-                color: cs.onSurfaceVariant,
+          if (related != null && related.isNotEmpty) ...[
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+              decoration: BoxDecoration(
+                color: cs.primaryContainer.withValues(alpha: 0.6),
+                borderRadius: BorderRadius.circular(4),
               ),
-            ),
-          ),
-          if (widget.onDelete != null) ...[
-            const SizedBox(width: 4),
-            SizedBox(
-              width: 28,
-              height: 28,
-              child: IconButton(
-                onPressed: widget.onDelete,
-                icon: Icon(Icons.close, size: 14, color: cs.error),
-                padding: EdgeInsets.zero,
-                splashRadius: 16,
-                tooltip: '删除节点',
+              child: Text(
+                related,
+                style: theme.textTheme.labelSmall?.copyWith(
+                  fontSize: 10,
+                  color: cs.onPrimaryContainer,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildOutputRow(ThemeData theme, ColorScheme cs, String name) {
-    return Container(
-      height: NodeLayout.outputRowHeight,
-      padding: const EdgeInsets.only(left: 16, right: 16),
-      alignment: Alignment.centerLeft,
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              name,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: cs.onSurfaceVariant,
+          const Spacer(),
+          if (widget.onDelete != null)
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: IconButton(
+                onPressed: widget.onDelete,
+                icon: Icon(Icons.close, size: 13, color: cs.error),
+                padding: EdgeInsets.zero,
+                splashRadius: 14,
+                tooltip: '删除节点',
               ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.right,
             ),
-          ),
         ],
       ),
     );
   }
 
-  Widget _buildDataSection(ThemeData theme, ColorScheme cs) {
+  Widget _buildAnnotation(ThemeData theme, ColorScheme cs) {
     return Container(
+      height: NodeLayout.annotationRowHeight,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      alignment: Alignment.centerLeft,
       decoration: BoxDecoration(
-        border: Border(
-          top: BorderSide(color: cs.outlineVariant, width: 0.5),
+        color: cs.surfaceContainerLow,
+        borderRadius: const BorderRadius.only(
+          bottomLeft: Radius.circular(11),
+          bottomRight: Radius.circular(11),
         ),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (final output in widget.node.dataOutputs)
-            Container(
-              height: NodeLayout.dataRowHeight,
-              padding: const EdgeInsets.symmetric(horizontal: 4),
-              child: Row(
-                children: [
-                  Icon(Icons.data_object,
-                      size: 10, color: cs.onSurfaceVariant,),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      output.name,
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        fontSize: 11,
-                        color: cs.onSurfaceVariant,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  _TypeChip(type: output.type),
-                ],
-              ),
-            ),
-        ],
+      child: Text(
+        widget.node.annotation,
+        style: theme.textTheme.labelSmall?.copyWith(
+          fontSize: 11,
+          color: cs.onSurfaceVariant,
+          fontStyle: FontStyle.italic,
+        ),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
       ),
     );
   }
@@ -366,38 +378,12 @@ class _NodeCardState extends State<NodeCard>
         return Icons.share;
       case 'code_run':
         return Icons.code;
+      case 'http_request':
+        return Icons.cloud_download_outlined;
+      case 'open_link':
+        return Icons.open_in_browser;
       default:
         return Icons.widgets_outlined;
     }
-  }
-}
-
-/// 数据输出类型小标签。
-class _TypeChip extends StatelessWidget {
-  const _TypeChip({required this.type});
-
-  final PortType type;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    final color = cs.onSurfaceVariant;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: color.withValues(alpha: 0.5), width: 0.5),
-      ),
-      child: Text(
-        type.toJson(),
-        style: TextStyle(
-          fontSize: 10,
-          color: color,
-          fontFamily: 'monospace',
-          height: 1.2,
-        ),
-      ),
-    );
   }
 }

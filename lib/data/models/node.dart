@@ -65,6 +65,12 @@ class Node {
   /// 动态命名数据输出列表（带原始类型）。
   final List<DataOutput> dataOutputs;
 
+  /// 用户为该节点编写的注释（可选，用于在画布上提示节点用途）。
+  ///
+  /// 与 [params] 中的 `name`（节点显示别名）不同：[annotation] 是说明性
+  /// 文字，会以较小字号显示在节点名称下方。空字符串表示无注释。
+  final String annotation;
+
   const Node({
     required this.id,
     required this.kind,
@@ -72,6 +78,7 @@ class Node {
     required this.position,
     this.controlOutputs = const [],
     this.dataOutputs = const [],
+    this.annotation = '',
   });
 
   Node copyWith({
@@ -81,6 +88,7 @@ class Node {
     NodePosition? position,
     List<ControlOutput>? controlOutputs,
     List<DataOutput>? dataOutputs,
+    String? annotation,
   }) =>
       Node(
         id: id ?? this.id,
@@ -89,6 +97,7 @@ class Node {
         position: position ?? this.position,
         controlOutputs: controlOutputs ?? this.controlOutputs,
         dataOutputs: dataOutputs ?? this.dataOutputs,
+        annotation: annotation ?? this.annotation,
       );
 
   @override
@@ -100,7 +109,8 @@ class Node {
           _nodeDeepEq.equals(params, other.params) &&
           position == other.position &&
           _nodeDeepEq.equals(controlOutputs, other.controlOutputs) &&
-          _nodeDeepEq.equals(dataOutputs, other.dataOutputs);
+          _nodeDeepEq.equals(dataOutputs, other.dataOutputs) &&
+          annotation == other.annotation;
 
   @override
   int get hashCode => Object.hash(
@@ -109,6 +119,7 @@ class Node {
         position,
         Object.hashAll(controlOutputs),
         Object.hashAll(dataOutputs),
+        annotation,
       );
 
   Map<String, dynamic> toJson() => {
@@ -118,6 +129,7 @@ class Node {
         'position': position.toJson(),
         'controlOutputs': controlOutputs.map((e) => e.toJson()).toList(),
         'dataOutputs': dataOutputs.map((e) => e.toJson()).toList(),
+        if (annotation.isNotEmpty) 'annotation': annotation,
       };
 
   factory Node.fromJson(Map<String, dynamic> json) => Node(
@@ -135,6 +147,7 @@ class Node {
                 ?.map((e) => DataOutput.fromJson(e as Map<String, dynamic>))
                 .toList() ??
             const [],
+        annotation: (json['annotation'] as String?) ?? '',
       );
 
   @override

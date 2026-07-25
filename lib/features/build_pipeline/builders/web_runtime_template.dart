@@ -592,8 +592,59 @@ class WebRuntimeTemplate {
         break;
       }
       default:
-        el = document.createElement("div");
-        el.setAttribute("data-type", uiNode.type);
+        // 插件提供的 UI 组件（type 以 "plugin_" 开头）。
+        // v1 不在 Web 运行时解释执行 manifest 中的 renderFn（需要将节点
+        // 解释器移植到 JS，工程量大）。此处渲染一个有意义的占位卡片：
+        // 显示组件类型 + props 摘要，让用户感知组件存在。
+        // 未来支持 renderFn 时，可在此处调用嵌入的函数 IR 生成 UiNode 子树
+        // 并递归 renderNode。
+        if (uiNode.type && uiNode.type.indexOf("plugin_") === 0) {
+          el = document.createElement("div");
+          el.setAttribute("data-type", uiNode.type);
+          el.style.padding = "10px";
+          el.style.margin = "4px 0";
+          el.style.border = "1px dashed #9e9e9e";
+          el.style.borderRadius = "8px";
+          el.style.background = "rgba(0,0,0,0.03)";
+          el.style.minHeight = "48px";
+          const header = document.createElement("div");
+          header.style.fontWeight = "600";
+          header.style.fontSize = "13px";
+          header.style.marginBottom = "4px";
+          header.style.display = "flex";
+          header.style.alignItems = "center";
+          header.style.gap = "6px";
+          const badge = document.createElement("span");
+          badge.textContent = "插件";
+          badge.style.fontSize = "10px";
+          badge.style.padding = "1px 4px";
+          badge.style.borderRadius = "3px";
+          badge.style.background = "#e0e0e0";
+          badge.style.color = "#424242";
+          header.appendChild(badge);
+          const nameSpan = document.createElement("span");
+          // 去掉 "plugin_" 前缀作为显示名
+          nameSpan.textContent = uiNode.type.substring(7);
+          header.appendChild(nameSpan);
+          el.appendChild(header);
+          // 显示前 2 项 prop 摘要
+          if (uiNode.props) {
+            const propKeys = Object.keys(uiNode.props).slice(0, 2);
+            if (propKeys.length > 0) {
+              const summary = document.createElement("div");
+              summary.style.fontSize = "11px";
+              summary.style.color = "#616161";
+              summary.style.fontFamily = "monospace";
+              summary.textContent = propKeys
+                .map(k => k + "=" + String(uiNode.props[k]))
+                .join(" · ");
+              el.appendChild(summary);
+            }
+          }
+        } else {
+          el = document.createElement("div");
+          el.setAttribute("data-type", uiNode.type);
+        }
     }
     el.setAttribute("data-ui-id", uiNode.id || "");
 

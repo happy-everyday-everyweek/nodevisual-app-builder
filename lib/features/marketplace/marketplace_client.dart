@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:archive/archive.dart';
 import 'package:http/http.dart' as http;
 
+import 'built_in_plugins.dart';
 import 'marketplace_entry.dart';
 import 'plugin_manifest.dart';
 
@@ -10,6 +11,9 @@ import 'plugin_manifest.dart';
 ///
 /// 负责从市场仓库拉取索引（index.json），以及从插件源仓库
 /// 下载 plugin.json 清单。所有网络请求通过 GitHub raw / codeload URL 完成。
+///
+/// 内置插件（OpenAI / Anthropic，repoUrl 以 `builtin://` 开头）的 manifest
+/// 直接从 [builtInPluginManifests] 取，无需网络下载。
 class MarketplaceClient {
   MarketplaceClient({
     String? marketplaceRawBaseUrl,
@@ -26,20 +30,56 @@ class MarketplaceClient {
   final String _marketplaceRawBaseUrl;
   final http.Client _httpClient;
 
-  /// 拉取市场索引。
+  /// 拉取市场索引（合并远程索引与内置条目）。
+  ///
+  /// 内置条目（OpenAI / Anthropic）始终追加到结果中，确保用户即使在
+  /// 远程索引不可用时也能看到这些插件。若远程索引中已存在同 id 条目，
+  /// 内置条目优先（覆盖远程版本）。
   Future<MarketplaceIndex> fetchIndex() async {
-    final response = await _httpClient.get(Uri.parse(_marketplaceRawBaseUrl));
-    if (response.statusCode != 200) {
-      throw Exception('无法获取插件市场索引 (${response.statusCode})');
+    // 先尝试拉取远程索引；失败时降级为仅内置条目。
+    List<MarketplaceEntry> remoteEntries = const [];
+    try {
+      final response = await _httpClient.get(Uri.parse(_marketplaceRawBaseUrl));
+      if (response.statusCode == 200) {
+        remoteEntries = MarketplaceIndex.parse(response.body).plugins;
+      }
+    } catch (_) {
+      // 网络错误时仅使用内置条目。
     }
-    return MarketplaceIndex.parse(response.body);
+
+    // 合并：远程条目 + 内置条目（同 id 时内置优先）。
+    final builtInIds = builtInMarketplaceEntries.map((e) => e.id).toSet();
+    final merged = <MarketplaceEntry>[
+      ...builtInMarketplaceEntries,
+      ...remoteEntries.where((e) => !builtInIds.contains(e.id)),
+    ];
+    return MarketplaceIndex(
+      version: 1,
+      name: 'NodeVisual 市场',
+      plugins: merged,
+    );
   }
 
   /// 从插件源仓库下载并解析 plugin.json 清单。
   ///
-  /// 使用 GitHub codeload API 下载仓库 ZIP，解压后读取 plugin.json。
+  /// 内置插件（[entry.repoUrl] 以 `builtin://` 开头）直接返回
+  /// [builtInPluginManifests] 中的 manifest，无需网络下载。
+  /// 其他插件使用 GitHub codeload API 下载仓库 ZIP，解压后读取 plugin.json。
   /// 返回的 [PluginManifest] 带有 sourceRepoUrl 与 installedAt 元信息。
   Future<PluginManifest> downloadPluginManifest(MarketplaceEntry entry) async {
+    // 内置插件：直接返回内置 manifest。
+    if (isBuiltInRepo(entry.repoUrl)) {
+      final pluginId = pluginIdFromBuiltInRepo(entry.repoUrl);
+      final manifest = pluginId == null ? null : builtInPluginManifests[pluginId];
+      if (manifest == null) {
+        throw Exception('未知的内置插件: ${entry.repoUrl}');
+      }
+      return manifest.copyWith(
+        sourceRepoUrl: entry.repoUrl,
+        installedAt: DateTime.now().toIso8601String(),
+      );
+    }
+
     final repoInfo = _parseGitHubRepo(entry.repoUrl);
     if (repoInfo == null) {
       throw Exception('无法解析仓库地址: ${entry.repoUrl}');
@@ -141,6 +181,9 @@ extension PluginManifestCopy on PluginManifest {
       outputs: outputs,
       configSchema: configSchema,
       executor: executor,
+      executorType: executorType,
+      functionDef: functionDef,
+      uiComponent: uiComponent,
       sourceRepoUrl: sourceRepoUrl ?? this.sourceRepoUrl,
       installedAt: installedAt ?? this.installedAt,
     );

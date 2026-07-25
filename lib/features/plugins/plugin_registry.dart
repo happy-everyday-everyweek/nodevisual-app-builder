@@ -1,7 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'llm/anthropic_plugin.dart';
-import 'llm/openai_plugin.dart';
+import '../marketplace/built_in_plugins.dart';
 import 'native/native_plugins.dart';
 import 'plugin_config_storage.dart';
 import 'plugin_config_storage_factory.dart';
@@ -28,7 +27,8 @@ class PluginEntry {
 /// 插件注册表。
 ///
 /// 集中登记所有已注册插件（规格 + 执行器），提供按 id 查询与枚举。
-/// 启动时内置注册 LLM 插件（OpenAI / Anthropic，见 Task 10）。
+/// 启动时内置注册各端原生能力插件（clipboard / haptic / share）；
+/// OpenAI / Anthropic 已迁移到市场，用户从市场安装后注册。
 class PluginRegistry {
   PluginRegistry._(this._entries);
 
@@ -58,21 +58,26 @@ class PluginRegistry {
       _entries.values.map((e) => e.spec).toList(growable: false);
 
   /// 构建内置插件注册表（启动时调用）。
+  ///
+  /// 仅注册各端原生能力插件（clipboard / haptic / share）。
+  /// OpenAI / Anthropic 已迁移到市场，用户从市场安装后通过
+  /// [InstalledPluginsNotifier._registerOne] 注册。
   static PluginRegistry withBuiltins() {
     final entries = <String, PluginEntry>{};
     final registry = PluginRegistry._(entries);
-    // ---- 内置 LLM 插件 ----
-    registry.register(openAiPluginSpec, OpenAiExecutor());
-    registry.register(anthropicPluginSpec, AnthropicExecutor());
     // ---- 各端原生能力插件（通过插件形式发布的原生能力）----
-    registry.register(clipboardPluginSpec, const ClipboardExecutor());
-    registry.register(hapticPluginSpec, const HapticExecutor());
-    registry.register(sharePluginSpec, const ShareExecutor());
+    // OpenAI / Anthropic 已迁移到市场（见 built_in_plugins.dart）。
+    for (final spec in builtInPreRegisteredSpecs) {
+      final executor = nativePluginExecutors[spec.id];
+      if (executor != null) {
+        registry.register(spec, executor);
+      }
+    }
     return registry;
   }
 }
 
-/// 插件注册表 provider（内置 LLM 插件已注册）。
+/// 插件注册表 provider（内置原生能力插件已注册）。
 final pluginRegistryProvider = Provider<PluginRegistry>((ref) {
   return PluginRegistry.withBuiltins();
 });

@@ -287,6 +287,95 @@ class GithubPublisher {
     }
   }
 
+  /// Fork 一个仓库到当前用户命名空间。
+  ///
+  /// 用于"发布到市场"流程：用户 fork marketplace 仓库，在自己的 fork 中
+  /// 修改 projects.json，再向上游创建 PR。
+  ///
+  /// [owner] / [repo]：上游仓库的 owner / repo。
+  /// 返回 fork 后的仓库全名 `user/repo`（同名时 GitHub 不报错，复用已有 fork）。
+  Future<String> forkRepo({
+    required String owner,
+    required String repo,
+  }) async {
+    final resp = await http.post(
+      Uri.parse('$_apiBase/repos/$owner/$repo/forks'),
+      headers: _headers,
+    );
+    // 202 表示 fork 已创建；200 表示已存在 fork（GitHub 复用）。
+    if (resp.statusCode != 202 && resp.statusCode != 200) {
+      throw GithubPublisherException(
+          'Fork 仓库失败：${resp.statusCode} ${resp.body}');
+    }
+    final json = jsonDecode(resp.body) as Map<String, dynamic>;
+    return json['full_name'] as String;
+  }
+
+  /// 创建 Pull Request。
+  ///
+  /// [owner] / [repo]：目标（上游）仓库。
+  /// [head]：PR 来源分支，格式 `user:branch`（跨 fork 时需带 user 前缀）。
+  /// [base]：目标分支（上游仓库的分支名）。
+  Future<String> createPullRequest({
+    required String owner,
+    required String repo,
+    required String head,
+    required String base,
+    required String title,
+    required String body,
+  }) async {
+    final resp = await http.post(
+      Uri.parse('$_apiBase/repos/$owner/$repo/pulls'),
+      headers: _headers,
+      body: jsonEncode({
+        'title': title,
+        'body': body,
+        'head': head,
+        'base': base,
+        'maintainer_can_modify': true,
+      }),
+    );
+    if (resp.statusCode != 201) {
+      throw GithubPublisherException(
+          '创建 PR 失败：${resp.statusCode} ${resp.body}');
+    }
+    final json = jsonDecode(resp.body) as Map<String, dynamic>;
+    return json['html_url'] as String;
+  }
+
+  /// 获取仓库中某文件的内容（默认分支）。
+  ///
+  /// 用于"发布到市场"流程：读取上游 marketplace 仓库的 projects.json，
+  /// 解析后追加/更新当前项目条目，再 push 到 fork。
+  ///
+  /// 文件不存在时返回 null（首次发布到空市场）。
+  Future<String?> getFileContent({
+    required String owner,
+    required String repo,
+    required String path,
+    String branch = 'main',
+  }) async {
+    final resp = await http.get(
+      Uri.parse('$_apiBase/repos/$owner/$repo/contents/$path?ref=$branch'),
+      headers: _headers,
+    );
+    if (resp.statusCode == 404) return null;
+    if (resp.statusCode != 200) {
+      throw GithubPublisherException(
+          '获取文件 $path 失败：${resp.statusCode} ${resp.body}');
+    }
+    final json = jsonDecode(resp.body) as Map<String, dynamic>;
+    // contents API 返回 base64 编码的内容。
+    final encoding = json['encoding'] as String?;
+    final content = json['content'] as String;
+    if (encoding == 'base64') {
+      // base64 解码为 UTF-8 字符串。
+      final bytes = base64.decode(content.replaceAll(RegExp(r'\s'), ''));
+      return utf8.decode(bytes);
+    }
+    return content;
+  }
+
   /// 将项目名转为合法 GitHub 仓库名 slug。
   ///
   /// 规则：小写化 → 非字母数字字符替换为 '-' → 合并连续 '-' → 去除首尾 '-'。
