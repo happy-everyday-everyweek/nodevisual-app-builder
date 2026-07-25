@@ -1,4 +1,4 @@
-import '../../data/models/component_context.dart';
+import '../../../data/models/component_context.dart';
 
 /// 页面级函数的执行状态。
 ///

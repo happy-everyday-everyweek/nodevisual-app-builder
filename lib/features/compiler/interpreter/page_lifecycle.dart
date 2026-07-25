@@ -1,6 +1,6 @@
-import '../../data/models/entry.dart';
-import '../../data/models/function_def.dart';
-import '../../data/models/project.dart';
+import '../../../data/models/entry.dart';
+import '../../../data/models/function_def.dart';
+import '../../../data/models/project.dart';
 import 'node_interpreter.dart';
 import 'runtime_scope.dart';
 

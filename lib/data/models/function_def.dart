@@ -6,6 +6,7 @@ import 'entry.dart';
 import 'func_param.dart';
 import 'node.dart';
 import 'port.dart';
+import 'variable_ref.dart';
 
 const DeepCollectionEquality _funcDeepEq = DeepCollectionEquality();
 const Uuid _migrateUuid = Uuid();
