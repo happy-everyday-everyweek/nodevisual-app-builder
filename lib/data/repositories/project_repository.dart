@@ -2,6 +2,7 @@ import 'package:uuid/uuid.dart';
 
 import '../local/local_storage.dart';
 import '../models/project.dart';
+import '../models/project_version.dart';
 
 /// 项目列表摘要（轻量信息，仅用于列表展示）。
 ///
@@ -103,5 +104,19 @@ class ProjectRepository {
     if (lastId == id) {
       await _storage.setLastProjectId(null);
     }
+  }
+
+  // ---- 版本管理 ----
+
+  /// 列出指定项目的所有版本历史（按发布时间倒序）。
+  Future<List<ProjectVersion>> listVersions(String projectId) async {
+    await _ensureInit();
+    return _storage.listVersions(projectId);
+  }
+
+  /// 追加一条版本发布记录（用于发布成功后落盘）。
+  Future<void> saveVersion(ProjectVersion version) async {
+    await _ensureInit();
+    await _storage.saveVersion(version);
   }
 }

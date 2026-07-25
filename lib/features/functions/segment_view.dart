@@ -530,13 +530,11 @@ class _FunctionsSegmentViewState extends ConsumerState<FunctionsSegmentView> {
   }
 
   Widget _buildHeader(ThemeData theme) {
+    // Tab 名称"函数"已在顶部 CapsuleTopBar 指明，这里仅保留新建按钮，避免重复。
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
       child: Row(
         children: [
-          Icon(Icons.functions, color: theme.colorScheme.primary),
-          const SizedBox(width: 8),
-          Text('函数', style: theme.textTheme.titleMedium),
           const Spacer(),
           IconButton(
             onPressed: _showCreateMenu,

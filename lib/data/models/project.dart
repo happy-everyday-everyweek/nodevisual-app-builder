@@ -29,6 +29,17 @@ class ProjectMeta {
   /// IR schema 版本（用于迁移）。
   final String version;
 
+  /// 项目语义化版本（semver，如 "0.1.0"）。
+  ///
+  /// 用于发布管理：每次发布默认 `+patch`，用户可在发布界面修改。
+  /// 新建项目默认 "0.1.0"。与 [version]（IR schema 版本）不同。
+  final String semver;
+
+  /// 已绑定的 GitHub 仓库 URL（首次发布后写入，后续发布复用）。
+  ///
+  /// 形如 `https://github.com/owner/repo`。null 表示尚未发布过。
+  final String? githubRepoUrl;
+
   const ProjectMeta({
     required this.id,
     required this.name,
@@ -36,6 +47,8 @@ class ProjectMeta {
     required this.updatedAt,
     this.description,
     this.version = '1',
+    this.semver = '0.1.0',
+    this.githubRepoUrl,
   });
 
   ProjectMeta copyWith({
@@ -45,6 +58,8 @@ class ProjectMeta {
     String? updatedAt,
     String? description,
     String? version,
+    String? semver,
+    String? githubRepoUrl,
   }) =>
       ProjectMeta(
         id: id ?? this.id,
@@ -53,6 +68,8 @@ class ProjectMeta {
         updatedAt: updatedAt ?? this.updatedAt,
         description: description ?? this.description,
         version: version ?? this.version,
+        semver: semver ?? this.semver,
+        githubRepoUrl: githubRepoUrl ?? this.githubRepoUrl,
       );
 
   @override
@@ -64,11 +81,21 @@ class ProjectMeta {
           createdAt == other.createdAt &&
           updatedAt == other.updatedAt &&
           description == other.description &&
-          version == other.version;
+          version == other.version &&
+          semver == other.semver &&
+          githubRepoUrl == other.githubRepoUrl;
 
   @override
-  int get hashCode =>
-      Object.hash(id, name, createdAt, updatedAt, description, version);
+  int get hashCode => Object.hash(
+        id,
+        name,
+        createdAt,
+        updatedAt,
+        description,
+        version,
+        semver,
+        githubRepoUrl,
+      );
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -76,7 +103,9 @@ class ProjectMeta {
         'createdAt': createdAt,
         'updatedAt': updatedAt,
         'version': version,
+        'semver': semver,
         if (description != null) 'description': description,
+        if (githubRepoUrl != null) 'githubRepoUrl': githubRepoUrl,
       };
 
   factory ProjectMeta.fromJson(Map<String, dynamic> json) => ProjectMeta(
@@ -86,6 +115,9 @@ class ProjectMeta {
         updatedAt: json['updatedAt'] as String,
         description: json['description'] as String?,
         version: (json['version'] as String?) ?? '1',
+        // 旧项目无 semver 字段时降级为 "0.1.0"。
+        semver: (json['semver'] as String?) ?? '0.1.0',
+        githubRepoUrl: json['githubRepoUrl'] as String?,
       );
 
   @override

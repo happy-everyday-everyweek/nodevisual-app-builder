@@ -24,6 +24,7 @@ dependencies:
   share_plus: ^10.0.0
   flutter_js: ^0.8.1
   dart_openai: ^5.1.0
+  url_launcher: ^6.3.0
 
 dev_dependencies:
   flutter_test:

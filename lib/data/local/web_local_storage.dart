@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/constants.dart';
 import '../models/project.dart';
+import '../models/project_version.dart';
 import 'local_storage.dart';
 
 /// 基于 [SharedPreferences] 的 [LocalStorage] 实现（Web 平台）。
@@ -14,12 +15,14 @@ import 'local_storage.dart';
 /// 数据布局（与 [SqliteLocalStorage] 语义对齐）：
 /// - `web.projects.index`：JSON 数组，每项为 [ProjectMeta] 序列化。
 /// - `web.project.<id>`：单个 [Project] 完整快照 JSON。
+/// - `web.versions.<id>`：[ProjectVersion] 列表 JSON 数组（按发布时间倒序）。
 /// - `prefKeyLastProjectId`：最近打开项目 id（复用 [AppConstants] 键）。
 class SharedPreferencesLocalStorage implements LocalStorage {
   SharedPreferencesLocalStorage();
 
   static const String _indexKey = 'web.projects.index';
   static const String _projectKeyPrefix = 'web.project.';
+  static const String _versionsKeyPrefix = 'web.versions.';
 
   SharedPreferences? _prefs;
 
@@ -28,6 +31,8 @@ class SharedPreferencesLocalStorage implements LocalStorage {
   }
 
   String _projectKey(String id) => '$_projectKeyPrefix$id';
+
+  String _versionsKey(String id) => '$_versionsKeyPrefix$id';
 
   Future<List<ProjectMeta>> _readIndex() async {
     final prefs = await _sp();
@@ -101,6 +106,7 @@ class SharedPreferencesLocalStorage implements LocalStorage {
   Future<void> deleteProject(String projectId) async {
     final prefs = await _sp();
     await prefs.remove(_projectKey(projectId));
+    await prefs.remove(_versionsKey(projectId));
     final metas = await _readIndex();
     metas.removeWhere((m) => m.id == projectId);
     await _writeIndex(metas);
@@ -120,5 +126,42 @@ class SharedPreferencesLocalStorage implements LocalStorage {
     } else {
       await prefs.setString(AppConstants.prefKeyLastProjectId, id);
     }
+  }
+
+  @override
+  Future<List<ProjectVersion>> listVersions(String projectId) async {
+    final prefs = await _sp();
+    final raw = prefs.getString(_versionsKey(projectId));
+    if (raw == null || raw.isEmpty) return <ProjectVersion>[];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return <ProjectVersion>[];
+      final versions = decoded
+          .whereType<Map<String, dynamic>>()
+          .map(ProjectVersion.fromJson)
+          .toList();
+      versions.sort((a, b) => b.publishedAt.compareTo(a.publishedAt));
+      return versions;
+    } catch (_) {
+      return <ProjectVersion>[];
+    }
+  }
+
+  @override
+  Future<void> saveVersion(ProjectVersion version) async {
+    final versions = await listVersions(version.projectId);
+    // upsert：相同 semver 替换，否则追加。
+    final idx =
+        versions.indexWhere((v) => v.semver == version.semver);
+    if (idx >= 0) {
+      versions[idx] = version;
+    } else {
+      versions.add(version);
+    }
+    final prefs = await _sp();
+    await prefs.setString(
+      _versionsKey(version.projectId),
+      jsonEncode(versions.map((v) => v.toJson()).toList()),
+    );
   }
 }
