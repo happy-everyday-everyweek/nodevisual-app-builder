@@ -191,7 +191,7 @@ class BindingResolver {
         return 0;
       case PortType.string:
         return '';
-      case PortType.bool:
+      case PortType.boolean:
         return false;
       case PortType.list:
         return <dynamic>[];

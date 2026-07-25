@@ -1277,10 +1277,10 @@ class _FunctionTriggerSheetState extends ConsumerState<_FunctionTriggerSheet> {
     super.initState();
     final entry = widget.initial.entry;
     _intervalController = TextEditingController(
-      text: entry?.kind == EntryKind.timer ? (entry.ref ?? '5000') : '5000',
+      text: entry?.kind == EntryKind.timer ? (entry?.ref ?? '5000') : '5000',
     );
     _extRefController = TextEditingController(
-      text: entry?.kind == EntryKind.external ? (entry.ref ?? '') : '',
+      text: entry?.kind == EntryKind.external ? (entry?.ref ?? '') : '',
     );
   }
 

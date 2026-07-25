@@ -76,7 +76,7 @@ const PluginSpec hapticPluginSpec = PluginSpec(
   outputs: [
     PluginOutput(
       name: 'ok',
-      type: PortType.bool,
+      type: PortType.boolean,
       description: '是否已触发',
     ),
   ],
@@ -133,7 +133,7 @@ const PluginSpec sharePluginSpec = PluginSpec(
   outputs: [
     PluginOutput(
       name: 'ok',
-      type: PortType.bool,
+      type: PortType.boolean,
       description: '是否已唤起分享面板',
     ),
   ],
