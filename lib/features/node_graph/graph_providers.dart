@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../data/models/control_edge.dart';
+import '../../data/models/entry.dart';
 import '../../data/models/function_def.dart';
 import '../../data/models/node.dart';
 import '../../data/models/port.dart';
@@ -58,6 +59,38 @@ class GraphMutator extends Notifier<FunctionDef?> {
   /// 调用方传入新的 [FunctionDef]（通常为 `_currentFunction.copyWith(...)`），
   /// 本方法直接写回项目并持久化，然后 GraphMutator 会通过 watch 自动镜像。
   void replaceFunction(FunctionDef fn) => _commit(fn);
+
+  // ---- 触发器（entry）----
+  //
+  // 触发器声明函数"如何被触发"。timer / external 两类触发器与具体 UI
+  // 组件 / 页面无关，因此由函数编辑器内编辑（每个函数声明自己的 entry）。
+  // uiEvent / pageEvent 仍由 UI 编辑器编辑（与组件 / 页面绑定）。
+
+  /// 为当前函数设置定时器触发器；[intervalMs] 为触发间隔（毫秒）。
+  void setTimerEntry(int intervalMs) {
+    final fn = _currentFunction;
+    if (fn == null) return;
+    _commit(fn.copyWith(
+      entry: FunctionEntry(kind: EntryKind.timer, ref: '$intervalMs'),
+    ));
+  }
+
+  /// 为当前函数设置外部触发器；[ref] 为外部事件标识
+  ///（如深链路径 `/page/detail` 或推送事件名）。
+  void setExternalEntry(String ref) {
+    final fn = _currentFunction;
+    if (fn == null) return;
+    _commit(fn.copyWith(
+      entry: FunctionEntry(kind: EntryKind.external, ref: ref),
+    ));
+  }
+
+  /// 清除当前函数的触发器（entry 置空，函数仅能被显式调用）。
+  void clearEntry() {
+    final fn = _currentFunction;
+    if (fn == null) return;
+    _commit(fn.copyWith(entry: null));
+  }
 
   // ---- 节点 ----
 

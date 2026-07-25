@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/constants.dart';
+import '../../data/models/entry.dart';
 import '../../data/models/func_param.dart';
 import '../../data/models/function_def.dart';
 import '../../data/models/node.dart';
@@ -493,6 +494,11 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
         title: Text(fn.name, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
           IconButton(
+            icon: const Icon(Icons.bolt_outlined),
+            tooltip: '触发器',
+            onPressed: () => _showTriggerSheet(fn),
+          ),
+          IconButton(
             icon: const Icon(Icons.edit_note_outlined),
             tooltip: '函数签名',
             onPressed: () => _showSignatureSheet(fn),
@@ -888,6 +894,21 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
       context: context,
       isScrollControlled: true,
       builder: (ctx) => _SignatureSheet(initial: fn),
+    );
+  }
+
+  /// 打开当前函数的触发器编辑面板。
+  ///
+  /// 触发器（entry）声明函数"如何被触发"。本编辑器只编辑与 UI 无关的两类：
+  /// - timer：定时触发（按毫秒间隔）
+  /// - external：外部触发（深链 / 推送 / app_start 等）
+  /// uiEvent / pageEvent 仍由 UI 编辑器编辑（与组件 / 页面绑定）。
+  void _showTriggerSheet(FunctionDef fn) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) => _FunctionTriggerSheet(initial: fn),
     );
   }
 }
@@ -1502,6 +1523,285 @@ class _ModeButton extends StatelessWidget {
             ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// 函数触发器编辑面板（每个函数编辑自己的 entry）。
+///
+/// 仅编辑与 UI 无关的两类触发器：
+/// - [EntryKind.timer]：定时触发，[FunctionEntry.ref] 存间隔毫秒数字符串。
+/// - [EntryKind.external]：外部触发，[FunctionEntry.ref] 存触发标识
+///   （深链路径或推送事件名）。
+///
+/// UI 事件（uiEvent）与页面事件（pageEvent）触发器由 UI 编辑器编辑，
+/// 不在此面板内。当前函数已有的 uiEvent / pageEvent entry 仅作只读展示。
+class _FunctionTriggerSheet extends ConsumerStatefulWidget {
+  const _FunctionTriggerSheet({required this.initial});
+
+  final FunctionDef initial;
+
+  @override
+  ConsumerState<_FunctionTriggerSheet> createState() =>
+      _FunctionTriggerSheetState();
+}
+
+class _FunctionTriggerSheetState extends ConsumerState<_FunctionTriggerSheet> {
+  late final TextEditingController _intervalController;
+  late final TextEditingController _extRefController;
+
+  @override
+  void initState() {
+    super.initState();
+    final entry = widget.initial.entry;
+    _intervalController = TextEditingController(
+      text: entry?.kind == EntryKind.timer ? (entry.ref ?? '5000') : '5000',
+    );
+    _extRefController = TextEditingController(
+      text: entry?.kind == EntryKind.external ? (entry.ref ?? '') : '',
+    );
+  }
+
+  @override
+  void dispose() {
+    _intervalController.dispose();
+    _extRefController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final entry = widget.initial.entry;
+    final mutator = ref.read(graphMutatorProvider.notifier);
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.7,
+      minChildSize: 0.4,
+      maxChildSize: 0.95,
+      expand: false,
+      builder: (ctx, controller) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+          child: ListView(
+            controller: controller,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.bolt, color: theme.colorScheme.primary),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '触发器 — ${widget.initial.name}',
+                      style: theme.textTheme.titleMedium,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '声明此函数如何被触发。UI 事件与页面事件触发器请在 UI 编辑器中绑定。',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.outline),
+              ),
+              const SizedBox(height: 12),
+
+              // ---- 当前触发器状态 ----
+              _CurrentEntryCard(entry: entry, onClear: mutator.clearEntry),
+              const SizedBox(height: 16),
+              const Divider(),
+              const SizedBox(height: 12),
+
+              // ---- 定时器区 ----
+              _SectionTitle(text: '定时器'),
+              const SizedBox(height: 6),
+              Text(
+                '按固定间隔（毫秒）重复触发此函数。',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.outline),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _intervalController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        labelText: '间隔（毫秒）',
+                        hintText: '如 5000',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    onPressed: () {
+                      final ms = int.tryParse(_intervalController.text.trim());
+                      if (ms == null || ms <= 0) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('请输入正整数间隔')),
+                        );
+                        return;
+                      }
+                      mutator.setTimerEntry(ms);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('已设置定时器：每 $ms ms 触发')),
+                      );
+                    },
+                    icon: const Icon(Icons.timer_outlined, size: 18),
+                    label: const Text('设置'),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 16),
+              const Divider(),
+              const SizedBox(height: 12),
+
+              // ---- 外部触发区 ----
+              _SectionTitle(text: '外部触发（深链 / 推送）'),
+              const SizedBox(height: 6),
+              Text(
+                '宿主应用通过匹配标识唤起此函数（如 app_start、/page/detail、'
+                'push_event_name）。',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.outline),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _extRefController,
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        labelText: '触发标识',
+                        hintText: '如 /page/detail 或 push_event_name',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.tonalIcon(
+                    onPressed: () {
+                      final ref = _extRefController.text.trim();
+                      if (ref.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('请输入触发标识')),
+                        );
+                        return;
+                      }
+                      mutator.setExternalEntry(ref);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('已设置外部触发：$ref')),
+                      );
+                    },
+                    icon: const Icon(Icons.link, size: 18),
+                    label: const Text('设置'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 当前触发器状态卡片（只读展示 + 清除按钮）。
+class _CurrentEntryCard extends StatelessWidget {
+  const _CurrentEntryCard({required this.entry, required this.onClear});
+
+  final FunctionEntry? entry;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    if (entry == null) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: cs.outlineVariant),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.flag_outlined, size: 18, color: cs.onSurfaceVariant),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '当前未声明触发器：函数仅能被其他函数显式调用。',
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: cs.onSurfaceVariant),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    final kind = entry!.kind;
+    final label = switch (kind) {
+      EntryKind.timer => '定时器',
+      EntryKind.external => '外部触发',
+      EntryKind.uiEvent => 'UI 事件（请在 UI 编辑器编辑）',
+      EntryKind.pageEvent => '页面事件（请在 UI 编辑器编辑）',
+      EntryKind.funcCall => '函数调用',
+    };
+    final icon = switch (kind) {
+      EntryKind.timer => Icons.timer,
+      EntryKind.external => Icons.link,
+      EntryKind.uiEvent => Icons.touch_app_outlined,
+      EntryKind.pageEvent => Icons.article_outlined,
+      EntryKind.funcCall => Icons.functions,
+    };
+    final editable = kind == EntryKind.timer || kind == EntryKind.external;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: cs.outlineVariant),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: cs.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(label, style: theme.textTheme.labelMedium),
+                if ((entry!.ref ?? '').isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      'ref: ${entry!.ref}',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: cs.onSurfaceVariant,
+                        fontFamily: 'monospace',
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          if (editable)
+            IconButton(
+              icon: const Icon(Icons.delete_outline, size: 20),
+              tooltip: '清除触发器',
+              onPressed: onClear,
+            ),
+        ],
       ),
     );
   }

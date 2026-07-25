@@ -335,46 +335,6 @@ class UiMutator extends Notifier<Project?> {
     return null;
   }
 
-  // ---- 定时器 entry ----
-
-  /// 为函数设置定时器 entry；intervalMs 为毫秒。
-  void setTimerEntry(String funcId, int intervalMs) {
-    final p = _project;
-    if (p == null) return;
-    final newFuncs = p.functions
-        .map((f) => f.id == funcId
-            ? f.copyWith(
-                entry: FunctionEntry(kind: EntryKind.timer, ref: '$intervalMs'),)
-            : f,)
-        .toList(growable: false);
-    _commit(p.copyWith(functions: newFuncs));
-  }
-
-  /// 为函数设置外部触发 entry（深链 / 推送）。
-  ///
-  /// [ref] 为外部事件标识（如深链路径 `/page/detail` 或推送事件名）。
-  void setExternalEntry(String funcId, String ref) {
-    final p = _project;
-    if (p == null) return;
-    final newFuncs = p.functions
-        .map((f) => f.id == funcId
-            ? f.copyWith(
-                entry: FunctionEntry(kind: EntryKind.external, ref: ref),)
-            : f,)
-        .toList(growable: false);
-    _commit(p.copyWith(functions: newFuncs));
-  }
-
-  /// 清除函数的 entry（用于删除定时器 / 触发点 / 外部触发）。
-  void clearEntry(String funcId) {
-    final p = _project;
-    if (p == null) return;
-    final newFuncs = p.functions
-        .map((f) => f.id == funcId ? f.copyWith(entry: null) : f)
-        .toList(growable: false);
-    _commit(p.copyWith(functions: newFuncs));
-  }
-
   // ---- 页面管理 ----
 
   /// 新建页面；可选关联 UI 根节点。

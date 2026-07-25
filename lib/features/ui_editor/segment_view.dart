@@ -86,11 +86,6 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
           const SizedBox(width: 8),
           Text('UI', style: theme.textTheme.titleMedium),
           const Spacer(),
-          IconButton(
-            onPressed: _showTimerSheet,
-            icon: const Icon(Icons.timer_outlined),
-            tooltip: '定时器 / 触发入口',
-          ),
           if (_isWide)
             IconButton(
               onPressed: () =>
@@ -180,16 +175,6 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
                   tooltip: '页面管理',
                   onPressed: () => _showPageSheet(project),
                   child: const Icon(Icons.article_outlined),
-                ),
-              ),
-              // 定时器 FAB
-              Positioned(
-                right: 16,
-                bottom: 80,
-                child: FloatingActionButton.small(
-                  heroTag: 'ui_timer_fab',
-                  onPressed: _showTimerSheet,
-                  child: const Icon(Icons.timer_outlined),
                 ),
               ),
             ],
@@ -748,17 +733,6 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
   bool _isInSubtree(UiNode node, String subtreeRootId) {
     if (node.id == subtreeRootId) return true;
     return node.children.any((c) => _isInSubtree(c, subtreeRootId));
-  }
-
-  // ---- 定时器 / 触发入口管理 ----
-
-  void _showTimerSheet() {
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (ctx) => const _TimerEntrySheet(),
-    );
   }
 
   // ---- 解析工具 ----
@@ -1739,213 +1713,11 @@ class _TriggerEditor extends ConsumerWidget {
 // ============================================================================
 // 定时器 / 触发入口管理
 // ============================================================================
-
-/// 触发入口管理 Sheet：列出已有定时器 + 外部触发 + 新建。
-class _TimerEntrySheet extends ConsumerStatefulWidget {
-  const _TimerEntrySheet();
-
-  @override
-  ConsumerState<_TimerEntrySheet> createState() => _TimerEntrySheetState();
-}
-
-class _TimerEntrySheetState extends ConsumerState<_TimerEntrySheet> {
-  String? _selectedTimerFuncId;
-  String? _selectedExtFuncId;
-  final TextEditingController _intervalController =
-      TextEditingController(text: '5000');
-  final TextEditingController _extRefController = TextEditingController();
-
-  @override
-  void dispose() {
-    _intervalController.dispose();
-    _extRefController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final project = ref.watch(uiMutatorProvider);
-    if (project == null) {
-      return const Padding(
-        padding: EdgeInsets.all(16),
-        child: Text('未打开项目'),
-      );
-    }
-    final functions = project.functions;
-    final timers = functions
-        .where((f) => f.entry?.kind == EntryKind.timer)
-        .toList(growable: false);
-    final externals = functions
-        .where((f) => f.entry?.kind == EntryKind.external)
-        .toList(growable: false);
-
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('触发入口', style: theme.textTheme.titleMedium),
-              const SizedBox(height: 8),
-
-              // ---- 定时器区 ----
-              _SectionHeader(title: '定时器', icon: Icons.timer_outlined),
-              if (timers.isEmpty)
-                Text('暂无定时器', style: theme.textTheme.bodySmall)
-              else
-                for (final f in timers)
-                  ListTile(
-                    dense: true,
-                    leading: const Icon(Icons.timer),
-                    title: Text(f.name),
-                    subtitle: Text('间隔 ${f.entry?.ref ?? '?'} ms'),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline, size: 20),
-                      onPressed: () => ref
-                          .read(uiMutatorProvider.notifier)
-                          .clearEntry(f.id),
-                    ),
-                  ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                value: _selectedTimerFuncId != null &&
-                        functions.any((f) => f.id == _selectedTimerFuncId)
-                    ? _selectedTimerFuncId
-                    : null,
-                decoration: const InputDecoration(
-                  isDense: true,
-                  labelText: '选择函数',
-                  border: OutlineInputBorder(),
-                ),
-                items: [
-                  for (final f in functions)
-                    DropdownMenuItem(value: f.id, child: Text(f.name)),
-                ],
-                onChanged: (v) => setState(() => _selectedTimerFuncId = v),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _intervalController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        isDense: true,
-                        labelText: '间隔（毫秒）',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  FilledButton(
-                    onPressed: _selectedTimerFuncId == null
-                        ? null
-                        : () {
-                            final ms = int.tryParse(_intervalController.text);
-                            if (ms == null || ms <= 0) return;
-                            ref
-                                .read(uiMutatorProvider.notifier)
-                                .setTimerEntry(_selectedTimerFuncId!, ms);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('已添加定时器')),
-                            );
-                          },
-                    child: const Text('添加'),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 16),
-              const Divider(),
-              const SizedBox(height: 8),
-
-              // ---- 外部触发区（深链 / 推送）----
-              _SectionHeader(title: '外部触发（深链 / 推送）', icon: Icons.link),
-              if (externals.isEmpty)
-                Text('暂无外部触发', style: theme.textTheme.bodySmall)
-              else
-                for (final f in externals)
-                  ListTile(
-                    dense: true,
-                    leading: const Icon(Icons.link),
-                    title: Text(f.name),
-                    subtitle: Text('标识: ${f.entry?.ref ?? '?'}'),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.delete_outline, size: 20),
-                      onPressed: () => ref
-                          .read(uiMutatorProvider.notifier)
-                          .clearEntry(f.id),
-                    ),
-                  ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                value: _selectedExtFuncId != null &&
-                        functions.any((f) => f.id == _selectedExtFuncId)
-                    ? _selectedExtFuncId
-                    : null,
-                decoration: const InputDecoration(
-                  isDense: true,
-                  labelText: '选择函数',
-                  border: OutlineInputBorder(),
-                ),
-                items: [
-                  for (final f in functions)
-                    DropdownMenuItem(value: f.id, child: Text(f.name)),
-                ],
-                onChanged: (v) => setState(() => _selectedExtFuncId = v),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _extRefController,
-                      decoration: const InputDecoration(
-                        isDense: true,
-                        labelText: '触发标识',
-                        hintText: '如 /page/detail 或 push_event_name',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  FilledButton.tonal(
-                    onPressed: _selectedExtFuncId == null
-                        ? null
-                        : () {
-                            final extRef = _extRefController.text.trim();
-                            if (extRef.isEmpty) return;
-                            ref
-                                .read(uiMutatorProvider.notifier)
-                                .setExternalEntry(_selectedExtFuncId!, extRef);
-                            _extRefController.clear();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('已添加外部触发')),
-                            );
-                          },
-                    child: const Text('添加'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Text(
-                '外部触发允许函数通过深链路径或推送事件标识被唤起。'
-                '在编译产物中，宿主应用通过匹配标识路由到对应函数。',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
+//
+// 注意：定时器（timer）与外部触发（external）触发器已迁移至函数编辑器中
+// 编辑（每个函数声明自己的 entry）。UI 编辑器仅保留 uiEvent / pageEvent
+// 两类与 UI 绑定的触发器编辑能力，故此处不再需要独立的触发入口管理 Sheet。
+// 详见 lib/features/node_graph/function_editor_screen.dart 的 _FunctionTriggerSheet。
 
 /// 小节标题。
 class _SectionHeader extends StatelessWidget {
