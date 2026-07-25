@@ -7,7 +7,6 @@ import 'core/nav_transitions.dart';
 import 'core/theme.dart';
 import 'features/node_graph/function_editor_screen.dart';
 import 'features/node_graph/node_editor_screen.dart';
-import 'presentation/screens/build/build_screen.dart';
 import 'presentation/screens/editor/editor_shell_screen.dart';
 import 'presentation/screens/home_screen.dart';
 import 'presentation/screens/marketplace/marketplace_screen.dart';
@@ -36,7 +35,9 @@ class NodeVisualApp extends ConsumerWidget {
 ///
 /// 所有页面采用 [NavTransitions.slideTransition] "哪去哪回"过渡：
 /// push 进入自右向左滑入，pop 退出原路自左向右滑出，曲线对称反向。
-/// 全屏对话框（如 build）使用 [NavTransitions.fadeTransition] 避免位移叠加。
+///
+/// 编译打包已迁移至"发布"Tab（编译 + 分发两步骤），不再使用独立的
+/// `/project/:id/build` 路由。
 final GoRouter _router = GoRouter(
   initialLocation: AppConstants.routeHome,
   routes: <RouteBase>[
@@ -100,17 +101,6 @@ final GoRouter _router = GoRouter(
               },
             ),
           ],
-        ),
-        GoRoute(
-          path: 'build',
-          name: 'build',
-          pageBuilder: (BuildContext context, GoRouterState state) {
-            final projectId = state.pathParameters['id']!;
-            return NavTransitions.fadeTransition(
-              child: BuildScreen(projectId: projectId),
-              state: state,
-            );
-          },
         ),
       ],
     ),

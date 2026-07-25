@@ -5,10 +5,10 @@ import '../../data/local/local_storage_factory.dart';
 import '../../data/models/project.dart';
 import '../../data/repositories/project_repository.dart';
 
-/// 编辑器段（segment）枚举：函数 / 数据库 / UI。
+/// 编辑器段（segment）枚举：函数 / 数据库 / UI / 发布。
 ///
 /// 顶层胶囊 Top 栏据此切换 [EditorShellScreen] 的内容区。
-enum EditorSegment { functions, database, ui }
+enum EditorSegment { functions, database, ui, publish }
 
 /// 本地存储实例（平台相关）。
 ///

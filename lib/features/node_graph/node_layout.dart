@@ -3,18 +3,21 @@ import 'dart:ui';
 /// 节点画布共享布局常量。
 ///
 /// 这些常量是 [NodeCard] 渲染布局与 [ConnectionPainter] /
-/// [FunctionEditorScreen] 端口命中检测之间的契约：
-/// - [NodeCard] 按这些值布局端口；
+/// [FunctionEditorScreen] 连线坐标计算之间的契约：
+/// - [NodeCard] 按这些值布局节点行；
 /// - 画布与连线层用这些值由节点 [Node.position] 反推端口在画布坐标系的位置。
 ///
 /// 改动任一值需同步三者。
+///
+/// **连线交互**：采用两步点击式（先点起始节点，再点终止节点），
+/// 无端口圆点。连线仅表达执行顺序，与参数传递无关。
 class NodeLayout {
   NodeLayout._();
 
   /// 节点卡片宽度。
   static const double width = 160;
 
-  /// 节点头部高度（标题 + 入口端口所在行）。
+  /// 节点头部高度（标题所在行）。
   static const double headerHeight = 36;
 
   /// 单个控制流输出端口行高度。
@@ -23,17 +26,8 @@ class NodeLayout {
   /// 单个数据输出展示行高度。
   static const double dataRowHeight = 20;
 
-  /// 端口视觉圆点半径。
-  static const double portRadius = 6;
-
-  /// 端口触控命中半径（移动端放大触控区，44dp 命中区）。
-  static const double portHitRadius = 22;
-
   /// 控制流连线粗细。
   static const double connectionStrokeWidth = 3;
-
-  /// 拖拽连线释放时，寻找目标入口端口的命中阈值（画布坐标）。
-  static const double portHitThreshold = 36;
 
   /// 命中连线时的容差（点击 / 长按连线检测）。
   static const double edgeHitThreshold = 14;

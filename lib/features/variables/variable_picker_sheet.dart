@@ -294,7 +294,7 @@ class _VariablePickerSheetState extends ConsumerState<VariablePickerSheet> {
       return _buildEmpty(theme, '无匹配项');
     }
 
-    // 按分组顺序渲染：上游 → 函数变量 → 项目变量 → 组件上下文。
+    // 按分组顺序渲染：上游 → 函数变量 → 项目变量 → 组件上下文 → 设备变量。
     final children = <Widget>[];
     for (final group in _Group.values) {
       final groupItems = filtered.where((it) => it.group == group).toList();
@@ -321,7 +321,7 @@ class _VariablePickerSheetState extends ConsumerState<VariablePickerSheet> {
   List<_PickerItem> _buildItems(FunctionDef fn, Project? project) {
     final items = <_PickerItem>[];
 
-    // 上游节点输出（仅节点侧 nodeId 非空时解析）。
+    // 上游节点输出（仅节点侧 nodeId 非空时解析；UI 编辑器无控制流概念）。
     if (widget.nodeId.isNotEmpty) {
       final upstream = ScopeResolver.resolveUpstreamOutputs(fn, widget.nodeId);
       for (final u in upstream) {
@@ -337,28 +337,31 @@ class _VariablePickerSheetState extends ConsumerState<VariablePickerSheet> {
     }
 
     // 函数变量：当前函数局部变量 + 页面级函数 outputs。
-    for (final v in fn.funcVars) {
-      items.add(_PickerItem(
-        title: v.name,
-        subtitle: v.name,
-        sourceLabel: '函数变量',
-        type: v.type,
-        ref: VariableRef.funcVar(varId: v.id),
-        group: _Group.funcVar,
-      ));
-    }
-    for (final p in widget.pageFuncOutputs) {
-      items.add(_PickerItem(
-        title: '${p.funcName} › ${p.outputName}',
-        subtitle: p.outputName,
-        sourceLabel: '页面函数（含加载态）',
-        type: p.type,
-        ref: p.toRef(),
-        group: _Group.funcVar,
-      ));
+    // 仅函数编辑器中可见（UI 编辑器无函数局部变量概念）。
+    if (widget.nodeId.isNotEmpty) {
+      for (final v in fn.funcVars) {
+        items.add(_PickerItem(
+          title: v.name,
+          subtitle: v.name,
+          sourceLabel: '函数变量',
+          type: v.type,
+          ref: VariableRef.funcVar(varId: v.id),
+          group: _Group.funcVar,
+        ));
+      }
+      for (final p in widget.pageFuncOutputs) {
+        items.add(_PickerItem(
+          title: '${p.funcName} › ${p.outputName}',
+          subtitle: p.outputName,
+          sourceLabel: '页面函数（含加载态）',
+          type: p.type,
+          ref: p.toRef(),
+          group: _Group.funcVar,
+        ));
+      }
     }
 
-    // 项目变量。
+    // 项目变量（UI 编辑器和函数编辑器中均可引用）。
     if (project != null) {
       for (final v in project.projectVars) {
         items.add(_PickerItem(
@@ -381,6 +384,18 @@ class _VariablePickerSheetState extends ConsumerState<VariablePickerSheet> {
         type: c.type,
         ref: c.toRef(),
         group: _Group.component,
+      ));
+    }
+
+    // 设备变量（UI 编辑器和函数编辑器中均可引用，只读）。
+    for (final prop in DeviceProperty.all) {
+      items.add(_PickerItem(
+        title: '设备 › ${DeviceProperty.labelOf(prop)}',
+        subtitle: prop,
+        sourceLabel: '设备变量',
+        type: PortType.string,
+        ref: VariableRef.device(property: prop),
+        group: _Group.device,
       ));
     }
 
@@ -422,6 +437,8 @@ class _VariablePickerSheetState extends ConsumerState<VariablePickerSheet> {
         return '项目变量';
       case _Group.component:
         return '组件上下文';
+      case _Group.device:
+        return '设备变量';
     }
   }
 
@@ -554,7 +571,7 @@ class _PendingPick {
 }
 
 /// 分组标识。
-enum _Group { upstream, funcVar, projVar, component }
+enum _Group { upstream, funcVar, projVar, component, device }
 
 /// 卡片中单个可选变量项。
 class _PickerItem {

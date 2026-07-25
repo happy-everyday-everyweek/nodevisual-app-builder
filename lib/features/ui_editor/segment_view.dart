@@ -78,13 +78,11 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
   // ---- 顶部标题栏 ----
 
   Widget _buildHeader(ThemeData theme) {
+    // Tab 名称"UI"已在顶部 CapsuleTopBar 指明，这里仅保留宽屏折叠按钮，避免重复。
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
       child: Row(
         children: [
-          Icon(Icons.widgets_outlined, color: theme.colorScheme.primary),
-          const SizedBox(width: 8),
-          Text('UI', style: theme.textTheme.titleMedium),
           const Spacer(),
           if (_isWide)
             IconButton(
@@ -596,6 +594,8 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
         return '{proj:${v?.name ?? r.varId}}';
       case VariableSource.component:
         return '{#:${r.fieldName}}';
+      case VariableSource.device:
+        return '{device:${DeviceProperty.labelOf(r.property ?? '')}}';
     }
   }
 
@@ -1537,6 +1537,8 @@ class _BindingEditor extends ConsumerWidget {
         return '项目变量 ${v?.name ?? r.varId}';
       case VariableSource.component:
         return '组件 ${r.fieldName}';
+      case VariableSource.device:
+        return '设备 ${DeviceProperty.labelOf(r.property ?? '')}';
     }
   }
 }

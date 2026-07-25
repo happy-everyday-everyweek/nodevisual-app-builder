@@ -5,6 +5,7 @@ import '../../data/models/func_param.dart';
 import '../../data/models/function_def.dart';
 import '../../data/models/node.dart';
 import '../../data/models/port.dart';
+import '../../features/build_pipeline/build_target.dart';
 
 const Uuid _uuid = Uuid();
 
@@ -222,6 +223,13 @@ class NodeKindSpec {
   /// 关联的插件 id（仅 plugin 类节点有效，如 `llm_openai`）。
   final String? pluginId;
 
+  /// 该节点可用的目标平台集合。
+  ///
+  /// null 或空列表表示全平台可用（默认）；非空列表表示仅这些平台可用，
+  /// 节点面板会在该节点上显示平台标签（如"仅 Android"）。
+  /// 例：`plugin_haptic` 仅移动端有效（[BuildTarget.android]）。
+  final List<BuildTarget>? platforms;
+
   const NodeKindSpec({
     required this.kind,
     required this.displayName,
@@ -232,7 +240,11 @@ class NodeKindSpec {
     this.dynamicOutputs,
     this.projectOutputs,
     this.pluginId,
+    this.platforms,
   });
+
+  /// 是否为全平台可用（platforms 为 null/空时为 true）。
+  bool get isAllPlatforms => platforms == null || platforms!.isEmpty;
 }
 
 /// 所有节点 kind 的注册表。
@@ -255,16 +267,27 @@ class NodeKindRegistry {
 
   static Map<String, NodeKindSpec> _buildSpecs() {
     final specs = <NodeKindSpec>[
-      // ---- 变量（精简：仅 variable_set，读取用 # 引用）----
+      // ---- 变量（仅 variable_set；读取用 # 引用，设备变量也已迁移为 # 引用源）----
       NodeKindSpec(
         kind: 'variable_set',
         displayName: '设置变量',
         category: NodeCategory.variable,
         paramSchema: const [
           ParamSpec(
-            name: 'varName',
-            label: '变量名',
-            inputType: ParamInputType.text,
+            name: 'target',
+            label: '目标类型',
+            inputType: ParamInputType.dropdown,
+            options: ['funcVar', 'projVar'],
+            defaultValue: 'funcVar',
+          ),
+          // varId 由节点编辑页按 target 动态渲染：
+          // - target == 'funcVar'：从当前函数 funcVars 中选择
+          // - target == 'projVar'：从项目 projectVars 中选择
+          // 此处仅声明 schema，实际选项覆盖在节点编辑页。
+          ParamSpec(
+            name: 'varId',
+            label: '目标变量',
+            inputType: ParamInputType.dropdown,
             defaultValue: '',
           ),
           ParamSpec(
@@ -276,24 +299,6 @@ class NodeKindRegistry {
           ),
         ],
         defaultControlOutputs: ['next'],
-      ),
-
-      // ---- 设备变量（只读：设备类型 / 时区 / 时间）----
-      NodeKindSpec(
-        kind: 'device_var',
-        displayName: '设备变量',
-        category: NodeCategory.variable,
-        paramSchema: const [
-          ParamSpec(
-            name: 'property',
-            label: '属性',
-            inputType: ParamInputType.dropdown,
-            options: ['deviceType', 'timezone', 'time'],
-            defaultValue: 'deviceType',
-          ),
-        ],
-        defaultControlOutputs: ['next'],
-        defaultDataOutputs: [(name: 'value', type: PortType.string)],
       ),
 
       // ---- 运算 ----
@@ -1214,6 +1219,12 @@ class NodeKindRegistry {
       ),
 
       // ---- 原生能力插件（通过插件形式发布的各端原生能力）----
+      // 平台限制说明：
+      // - plugin_clipboard：Flutter Clipboard 在 Web/Android/Windows 均可用，全平台。
+      // - plugin_haptic：HapticFeedback 仅移动端有效（Android/iOS），Web/Windows 无效。
+      //   当前 BuildTarget 仅 Android 属移动端 → platforms: [android]。
+      // - plugin_share：share_plus 在 Android/Windows 行为一致，Web 端走 Web Share API
+      //   但兼容性差，标 [android, windows]。
       NodeKindSpec(
         kind: 'plugin_clipboard',
         displayName: '剪贴板',
@@ -1243,6 +1254,7 @@ class NodeKindRegistry {
         displayName: '触感反馈',
         category: NodeCategory.plugin,
         pluginId: 'native_haptic',
+        platforms: const [BuildTarget.android],
         paramSchema: const [
           ParamSpec(
             name: 'type',
@@ -1260,6 +1272,7 @@ class NodeKindRegistry {
         displayName: '分享',
         category: NodeCategory.plugin,
         pluginId: 'native_share',
+        platforms: const [BuildTarget.android, BuildTarget.windows],
         paramSchema: const [
           ParamSpec(
             name: 'text',

@@ -2,18 +2,22 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../core/constants.dart';
 import '../../../features/database/segment_view.dart';
 import '../../../features/functions/segment_view.dart';
 import '../../../features/project/project_providers.dart';
+import '../../../features/publish/segment_view.dart';
 import '../../../features/ui_editor/segment_view.dart';
 import '../../widgets/capsule_top_bar.dart';
 
 /// 项目编辑器宿主屏幕。
 ///
 /// 接收 [projectId]，打开项目并置入 [currentProjectProvider]；
-/// 顶部悬浮 [CapsuleTopBar]，下方用 [IndexedStack] 承载三段内容，
+/// 顶部悬浮 [CapsuleTopBar]，下方用 [IndexedStack] 承载四段内容，
 /// 切换段时各段 widget state 保留（IndexedStack 保活所有子 widget）。
+///
+/// 四段：函数 / 数据库 / UI / 发布。
+/// 编译打包入口已迁移至"发布"段内（编译 + 分发两步骤），不再使用
+/// 右上角的悬浮编译按钮和 `/project/:id/build` 路由。
 class EditorShellScreen extends ConsumerStatefulWidget {
   const EditorShellScreen({super.key, required this.projectId});
 
@@ -93,12 +97,13 @@ class _EditorShellScreenState extends ConsumerState<EditorShellScreen> {
       );
     }
 
-    // 三段切换：使用 AnimatedSwitcher 实现淡入淡出 + 轻微位移（原路反向）。
+    // 四段切换：使用 AnimatedSwitcher 实现淡入淡出 + 轻微位移（原路反向）。
     // IndexedStack 保活所有子 widget state；外层 AnimatedSwitcher 仅做切换过渡。
     final children = const [
       FunctionsSegmentView(),
       DatabaseSegmentView(),
       UiEditorSegmentView(),
+      PublishSegmentView(),
     ];
 
     return Scaffold(
@@ -138,55 +143,7 @@ class _EditorShellScreenState extends ConsumerState<EditorShellScreen> {
             right: 0,
             child: CapsuleTopBar(),
           ),
-          // 编译打包按钮：置于右上角（胶囊栏下方），避免遮挡底部画布按钮。
-          Positioned(
-            top: 76,
-            right: 12,
-            child: _CompileButton(
-              onPressed: () =>
-                  context.push(AppConstants.buildRoute(widget.projectId)),
-            ),
-          ),
         ],
-      ),
-    );
-  }
-}
-
-/// 编译打包按钮：小尺寸胶囊，置于右上角不遮挡画布内容。
-class _CompileButton extends StatelessWidget {
-  const _CompileButton({required this.onPressed});
-
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
-    return Material(
-      elevation: 2,
-      borderRadius: BorderRadius.circular(20),
-      color: cs.primary,
-      child: InkWell(
-        onTap: onPressed,
-        borderRadius: BorderRadius.circular(20),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.build_outlined, size: 16, color: cs.onPrimary),
-              const SizedBox(width: 4),
-              Text(
-                '编译',
-                style: theme.textTheme.labelSmall?.copyWith(
-                  color: cs.onPrimary,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }

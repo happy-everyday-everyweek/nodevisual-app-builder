@@ -9,7 +9,7 @@ class AppConstants {
   static const String appName = 'NodeVisual App Builder';
 
   /// 应用版本号（与 pubspec.yaml 保持一致）。
-  static const String appVersion = '0.1.0';
+  static const String appVersion = '0.3.0';
 
   /// 构建号。
   static const int buildNumber = 1;
@@ -47,12 +47,6 @@ class AppConstants {
   ) =>
       '/project/$projectId/function/$functionId/node/$nodeId';
 
-  /// 编译打包页路由路径模板（含 :id 路径参数）。
-  static const String routeBuild = '/project/:id/build';
-
-  /// 拼接编译打包页路由地址。
-  static String buildRoute(String projectId) => '/project/$projectId/build';
-
   // ---- 本地存储相关键名 ----
   /// SharedPreferences 中保存最近打开项目 id 的键。
   static const String prefKeyLastProjectId = 'last_project_id';
@@ -61,7 +55,10 @@ class AppConstants {
   static const String sqliteDbName = 'nodevisual.db';
 
   /// SQLite 数据库版本。
-  static const int sqliteDbVersion = 1;
+  ///
+  /// v1：初始 schema（projects 表）。
+  /// v2：projects 表新增 semver / github_repo_url 列；新增 project_versions 表。
+  static const int sqliteDbVersion = 2;
 
   /// 项目文件存储子目录名（位于应用文档目录下）。
   static const String projectsDirName = 'projects';

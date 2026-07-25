@@ -6,7 +6,7 @@ import '../../core/constants.dart';
 import '../../data/models/entry.dart';
 import '../../data/models/function_def.dart';
 import '../../data/models/node.dart';
-import '../../data/models/port.dart';
+import '../build_pipeline/build_target.dart';
 import '../marketplace/marketplace_providers.dart';
 import 'connection_painter.dart';
 import 'dag_validator.dart';
@@ -23,8 +23,15 @@ import 'node_widget.dart';
 /// 画布层（控制平面）：
 /// - [InteractiveViewer] 提供双指缩放 + 双指平移；
 /// - 内部 Stack 为虚拟画布坐标系，节点用 [Positioned] 摆放；
-/// - [CustomPaint] + [ConnectionPainter] 绘制控制流连线与拖拽中的临时连线；
-/// - 单指拖节点 body 移动节点；单指拖端口画线；长按节点选中；长按连线删除。
+/// - [CustomPaint] + [ConnectionPainter] 绘制控制流连线；
+/// - 指针模式：单击打开节点编辑页 / 长按选中 / 拖拽移动节点；
+/// - 连线模式：两步点击式（先点击起始节点，再点击终止节点建立连线）。
+///   多输出母节点（if / loop 等）遵循子母节点设计——每个输出端口已自动
+///   连到一个 `branch` 子节点，连线起点必须点击子节点，母节点本身不能
+///   作为起点。长按连线删除。
+///
+/// **核心语义**：连线仅代表执行顺序，与参数传递无关。参数通过节点
+/// [Node.params] 中的 `#` 引用（[VariableRef]）独立完成，与控制流边解耦。
 ///
 /// 数据平面（节点编辑页）由 Task 5/7 实现，本屏幕不展开。
 class FunctionEditorScreen extends ConsumerStatefulWidget {
@@ -47,20 +54,21 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
       TransformationController();
   final GlobalKey _viewerKey = GlobalKey();
 
-  // 连线拖拽中的临时状态（仅本地 UI）。
-  String? _dragFromNode;
-  String? _dragFromPort;
-  Offset? _dragFromCanvasPos;
-  Offset? _dragCurrentCanvasPos;
+  // 连线模式下的"已选中起始节点 + 端口"状态（仅本地 UI）。
+  //
+  // 连线交互采用两步点击式：
+  // 1. 第一次点击节点 → 设为起始。多输出母节点（if / loop 等）不能作为
+  //    起点（其输出端口已自动连到 branch 子节点），需点击对应的子节点；
+  // 2. 第二次点击另一节点 → 建立控制流连线（仅代表执行顺序）。
+  // 点击空白或同一节点 → 取消起始选择。
+  String? _connectSourceNode;
+  String? _connectSourcePort;
 
   // 当前选中的连线键（"fromNode:fromPort:toNode"），用于高亮 + 删除。
   String? _selectedEdgeKey;
 
   /// 当前编辑器交互模式（指针 / 连线 / 添加）。
   NodeEditorMode _mode = NodeEditorMode.pointer;
-
-  /// 连线模式下当前拖拽悬停的目标节点 id（高亮 + 命中判定）。
-  String? _connectHoverTarget;
 
   /// 添加模式下是否展开节点面板。
   bool _paletteExpanded = false;
@@ -225,146 +233,106 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
 
   // ---- 连线交互 ----
 
-  /// 连线模式拖拽起点：以源节点的第一个控制流输出端口作为 fromPort。
-  void _onConnectionDragStart(String nodeId) {
+  /// 连线模式：节点点击回调（两步点击式连线）。
+  ///
+  /// 流程：
+  /// 1. 无起始节点时：本次点击的节点作为起始。
+  ///    - **子母节点设计**：controlOutputs >= 2 的母节点（if / loop 等）不允许
+  ///      直接作为连线起点——母节点的每个输出端口已在 [GraphMutator.addWithBranches]
+  ///      时自动连到一个 `branch` 子节点（"一个输出端口 = 一个子节点"）。
+  ///      用户必须点击对应的 `branch` 子节点作为起点。
+  ///    - 单输出节点（含 `branch` 子节点）：直接选中其唯一输出端口。
+  /// 2. 已有起始节点时：本次点击的节点作为终止，建立控制流连线。
+  ///    - 同一节点再次点击 → 取消起始选择（避免自环）；
+  ///    - 不同节点 → 调用 [GraphMutator.addEdge] 建立连线；
+  ///    - 成功后清除起始选择（每次只建一根连线，避免视觉混乱）。
+  ///
+  /// 连线仅代表执行顺序，与参数传递无关。
+  void _onNodeConnectTap(String nodeId) {
     final fn = ref.read(graphMutatorProvider);
     if (fn == null) return;
-    Node? nodeFound;
+    Node? node;
     for (final n in fn.nodes) {
       if (n.id == nodeId) {
-        nodeFound = n;
+        node = n;
         break;
       }
     }
-    final node = nodeFound;
-    if (node == null || node.controlOutputs.isEmpty) return;
-    final fromPort = node.controlOutputs.first.name;
-    final portIndex = node.controlOutputs.indexWhere((p) => p.name == fromPort);
-    if (portIndex < 0) return;
-    final off = NodeLayout.outputPortOffset(portIndex);
-    final origin = node.position;
-    final fromPos = Offset(origin.x + off.dx, origin.y + off.dy);
-    setState(() {
-      _dragFromNode = nodeId;
-      _dragFromPort = fromPort;
-      _dragFromCanvasPos = fromPos;
-      _dragCurrentCanvasPos = fromPos;
-    });
-  }
+    if (node == null) return;
 
-  void _onConnectionDragUpdate(Offset globalPosition) {
-    final canvasPos = _globalToCanvas(globalPosition);
-    if (canvasPos == null) return;
-    // 实时计算悬停目标节点（用于高亮）。
-    final fn = ref.read(graphMutatorProvider);
-    String? hoverTarget;
-    if (fn != null && _dragFromNode != null) {
-      double bestDist = double.infinity;
-      for (final node in fn.nodes) {
-        if (node.id == _dragFromNode) continue;
-        // 以节点中心为命中点。
-        final center = Offset(
-          node.position.x + NodeLayout.width / 2,
-          node.position.y + NodeLayout.headerHeight / 2,
-        );
-        final d = (center - canvasPos).distance;
-        // 命中阈值：节点对角线一半 + 余量。
-        final halfDiag = (NodeLayout.width / 2) * 1.2;
-        if (d < halfDiag && d < bestDist) {
-          bestDist = d;
-          hoverTarget = node.id;
-        }
+    // 已有起始节点：本次点击作为终止。
+    final sourceNode = _connectSourceNode;
+    final sourcePort = _connectSourcePort;
+    if (sourceNode != null && sourcePort != null) {
+      if (nodeId == sourceNode) {
+        // 同一节点 → 取消起始选择。
+        setState(() {
+          _connectSourceNode = null;
+          _connectSourcePort = null;
+        });
+        return;
       }
-    }
-    setState(() {
-      _dragCurrentCanvasPos = canvasPos;
-      _connectHoverTarget = hoverTarget;
-    });
-  }
-
-  void _onConnectionDragEnd(Offset? globalPosition) {
-    final dragFromNode = _dragFromNode;
-    final dragFromPort = _dragFromPort;
-    final dragFromPos = _dragFromCanvasPos;
-    final hoverTarget = _connectHoverTarget;
-    final endCanvasPos =
-        globalPosition == null ? _dragCurrentCanvasPos : _globalToCanvas(globalPosition);
-
-    // 清理拖拽状态。
-    setState(() {
-      _dragFromNode = null;
-      _dragFromPort = null;
-      _dragFromCanvasPos = null;
-      _dragCurrentCanvasPos = null;
-      _connectHoverTarget = null;
-    });
-
-    if (dragFromNode == null ||
-        dragFromPort == null ||
-        dragFromPos == null ||
-        endCanvasPos == null) {
+      final result = ref.read(graphMutatorProvider.notifier).addEdge(
+            fromNode: sourceNode,
+            fromPort: sourcePort,
+            toNode: nodeId,
+          );
+      if (!mounted) return;
+      switch (result) {
+        case AddEdgeResult.cycle:
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('连线会形成环，已拒绝'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+          break;
+        case AddEdgeResult.invalid:
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('端口或节点不存在，已忽略'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+          break;
+        case AddEdgeResult.success:
+          // 静默成功（v1 无须提示）。
+          break;
+      }
+      // 建立后清除起始选择（v1：避免视觉混乱，每次只建一根连线）。
+      setState(() {
+        _connectSourceNode = null;
+        _connectSourcePort = null;
+      });
       return;
     }
 
-    // 优先使用拖拽过程中识别的悬停目标节点；否则回退到最近命中。
-    String? bestTarget = hoverTarget;
-    if (bestTarget == null) {
-      final fn = ref.read(graphMutatorProvider);
-      if (fn == null) return;
-      double bestDist = double.infinity;
-      for (final node in fn.nodes) {
-        if (node.id == dragFromNode) continue;
-        final center = Offset(
-          node.position.x + NodeLayout.width / 2,
-          node.position.y + NodeLayout.headerHeight / 2,
-        );
-        final d = (center - endCanvasPos).distance;
-        final halfDiag = (NodeLayout.width / 2) * 1.2;
-        if (d < halfDiag && d < bestDist) {
-          bestDist = d;
-          bestTarget = node.id;
-        }
-      }
+    // 无起始节点：本次点击作为起始。
+    if (node.controlOutputs.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('该节点无控制流输出端口，无法作为连线起点'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
     }
-
-    if (bestTarget == null) return;
-
-    final result = ref.read(graphMutatorProvider.notifier).addEdge(
-          fromNode: dragFromNode,
-          fromPort: dragFromPort,
-          toNode: bestTarget,
-        );
-    if (!mounted) return;
-    switch (result) {
-      case AddEdgeResult.cycle:
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('连线会形成环，已拒绝'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-        break;
-      case AddEdgeResult.invalid:
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('端口或节点不存在，已忽略'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-        break;
-      case AddEdgeResult.success:
-        // 静默成功（v1 无须提示）。
-        break;
+    if (node.controlOutputs.length >= 2) {
+      // 子母节点设计：多输出母节点的每个端口已自动连到对应的 branch 子节点，
+      // 不能直接作为连线起点（否则会破坏母→子边，且违背"一个端口=一个子节点"
+      // 的核心设计）。引导用户点击子节点。
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('多输出节点已自动生成子节点，请点击对应的"分支出口"子节点作为连线起点'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
     }
-  }
-
-  void _onConnectionDragCancel() {
+    // 单输出节点（含 branch 子节点）：直接选中其唯一输出端口。
     setState(() {
-      _dragFromNode = null;
-      _dragFromPort = null;
-      _dragFromCanvasPos = null;
-      _dragCurrentCanvasPos = null;
-      _connectHoverTarget = null;
+      _connectSourceNode = nodeId;
+      _connectSourcePort = node.controlOutputs.first.name;
     });
   }
 
@@ -429,6 +397,13 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
     }
     if (_selectedEdgeKey != null) {
       setState(() => _selectedEdgeKey = null);
+    }
+    // 连线模式下点击空白 → 取消已选中的起始节点。
+    if (_connectSourceNode != null) {
+      setState(() {
+        _connectSourceNode = null;
+        _connectSourcePort = null;
+      });
     }
   }
 
@@ -551,13 +526,12 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
                   bottom: 0,
                   child: _buildCapsuleToolbar(theme),
                 ),
-                if (_dragFromCanvasPos != null &&
-                    _dragCurrentCanvasPos != null)
+                if (_mode == NodeEditorMode.connect && _connectSourceNode != null)
                   Positioned(
                     left: 0,
                     right: 0,
                     top: 0,
-                    child: _buildDragHint(theme),
+                    child: _buildConnectHint(theme, fn),
                   ),
               ],
             );
@@ -609,9 +583,6 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
                   color: theme.colorScheme.primary,
                   selectedEdgeKey: _selectedEdgeKey,
                   selectedColor: theme.colorScheme.error,
-                  dragFrom: _dragFromCanvasPos,
-                  dragTo: _dragCurrentCanvasPos,
-                  dragColor: theme.colorScheme.tertiary,
                 ),
               ),
             ),
@@ -629,11 +600,8 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
                   onDelete: () => _onNodeDelete(node.id),
                   onDragUpdate: (details) =>
                       _onNodeDragUpdate(node.id, details),
-                  onConnectionDragStart: _onConnectionDragStart,
-                  onConnectionDragUpdate: _onConnectionDragUpdate,
-                  onConnectionDragEnd: _onConnectionDragEnd,
-                  onConnectionDragCancel: _onConnectionDragCancel,
-                  isConnectionTarget: node.id == _connectHoverTarget,
+                  onConnectTap: _onNodeConnectTap,
+                  isConnectionSource: node.id == _connectSourceNode,
                 ),
               ),
           ],
@@ -720,7 +688,8 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
 
   /// 切换编辑器模式。
   ///
-  /// 切换到"添加"时默认展开节点面板；切换到其它模式时折叠面板并清除连线拖拽态。
+  /// 切换到"添加"时默认展开节点面板；切换到其它模式时折叠面板并清除
+  /// 连线起始选择态。
   void _switchMode(NodeEditorMode newMode) {
     setState(() {
       _mode = newMode;
@@ -729,12 +698,9 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
       } else {
         _paletteExpanded = false;
       }
-      // 切换模式时清理未完成的连线拖拽。
-      _dragFromNode = null;
-      _dragFromPort = null;
-      _dragFromCanvasPos = null;
-      _dragCurrentCanvasPos = null;
-      _connectHoverTarget = null;
+      // 切换模式时清理未完成的连线起始选择。
+      _connectSourceNode = null;
+      _connectSourcePort = null;
     });
   }
 
@@ -754,6 +720,7 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
             icon: _iconForKind(spec.kind, spec.category),
             category: spec.category,
             group: displayGroupOf(spec.category),
+            platforms: spec.platforms,
           ),
     ];
     // 追加市场插件（去重：避免与内置 plugin_openai/anthropic 等 kind 冲突）。
@@ -797,7 +764,21 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
     );
   }
 
-  Widget _buildDragHint(ThemeData theme) {
+  Widget _buildConnectHint(ThemeData theme, FunctionDef fn) {
+    final sourceNode = _connectSourceNode;
+    final sourcePort = _connectSourcePort;
+    String sourceLabel = '';
+    if (sourceNode != null) {
+      for (final n in fn.nodes) {
+        if (n.id == sourceNode) {
+          final name = n.params['name']?.toString();
+          sourceLabel = (name != null && name.isNotEmpty)
+              ? '$name${sourcePort != null ? ' · $sourcePort' : ''}'
+              : '${n.kind}${sourcePort != null ? ' · $sourcePort' : ''}';
+          break;
+        }
+      }
+    }
     return Align(
       alignment: Alignment.topCenter,
       child: Padding(
@@ -815,7 +796,9 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
                     size: 14, color: theme.colorScheme.onTertiaryContainer,),
                 const SizedBox(width: 4),
                 Text(
-                  '拖到目标节点上释放以建立连线',
+                  sourceLabel.isEmpty
+                      ? '点击起始节点（连线仅代表执行顺序）'
+                      : '已选起点：$sourceLabel，点击目标节点建立连线',
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: theme.colorScheme.onTertiaryContainer,
                   ),
@@ -931,6 +914,7 @@ class _NodeKindEntry {
     required this.icon,
     required this.category,
     required this.group,
+    this.platforms,
   });
 
   final String kind;
@@ -938,6 +922,23 @@ class _NodeKindEntry {
   final IconData icon;
   final NodeCategory category;
   final NodeDisplayGroup group;
+
+  /// 该节点可用的目标平台集合（null/空 = 全平台）。
+  ///
+  /// 用于在面板按钮上显示平台标签，提示用户该节点仅特定端可用。
+  /// 例：plugin_haptic 的 platforms = [BuildTarget.android]。
+  final List<BuildTarget>? platforms;
+
+  /// 是否为全平台可用。
+  bool get isAllPlatforms => platforms == null || platforms!.isEmpty;
+
+  /// 平台标签简写（用于面板按钮底部小标签）。
+  ///
+  /// 全平台返回空串；非全平台返回平台 label 拼接，如 "Android / Windows"。
+  String get platformLabel {
+    if (isAllPlatforms) return '';
+    return platforms!.map((p) => p.label).join(' / ');
+  }
 }
 
 /// 按 kind 推断调色板按钮图标（与节点类别语义对齐）。
@@ -1136,6 +1137,8 @@ class _PaletteButtonState extends State<_PaletteButton> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
+    final platformLabel = widget.entry.platformLabel;
+    final isPlatformLimited = !widget.entry.isAllPlatforms;
     return GestureDetector(
       onTapDown: (_) => _setPressed(true),
       onTapUp: (_) => _setPressed(false),
@@ -1179,6 +1182,27 @@ class _PaletteButtonState extends State<_PaletteButton> {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
+              if (isPlatformLimited) ...[
+                const SizedBox(height: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: cs.tertiary.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    platformLabel,
+                    style: TextStyle(
+                      fontSize: 9,
+                      height: 1.2,
+                      color: cs.onSurfaceVariant,
+                      fontWeight: FontWeight.w500,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
             ],
           ),
         ),

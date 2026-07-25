@@ -177,6 +177,47 @@ Object? _resolveVariableRef(VariableRef ref, RuntimeScope scope) {
       if (ref.componentId == null || ref.fieldName == null) return null;
       final ctx = scope.getComponentContext(ref.componentId!);
       return ctx?.get(ref.fieldName!);
+    case VariableSource.device:
+      // 设备变量：只读属性（deviceType / timezone / time），无运行时作用域依赖。
+      if (ref.property == null) return null;
+      return _resolveDeviceProperty(ref.property!);
+  }
+}
+
+/// 解析设备变量属性为运行时值。
+///
+/// [property] ∈ {deviceType, timezone, time}：
+/// - deviceType：'web' / 'android' / 'ios' / 'windows' / 'macos' / 'linux' / 'fuchsia'
+/// - timezone：时区名（[DateTime.timeZoneName] 为空时回退为 UTC±HH:MM 偏移）
+/// - time：当前时间 ISO8601 字符串
+String _resolveDeviceProperty(String property) {
+  switch (property) {
+    case DeviceProperty.timezone:
+      final name = DateTime.now().timeZoneName;
+      if (name != null && name.isNotEmpty) {
+        return name;
+      }
+      // 回退：基于 offset 的 UTC±HH:MM。
+      final offset = DateTime.now().timeZoneOffset;
+      final sign = offset.isNegative ? '-' : '+';
+      final hh = offset.inHours.abs().toString().padLeft(2, '0');
+      final mm = (offset.inMinutes.abs() % 60).toString().padLeft(2, '0');
+      return 'UTC$sign$hh:$mm';
+    case DeviceProperty.time:
+      return DateTime.now().toIso8601String();
+    case DeviceProperty.deviceType:
+    default:
+      if (kIsWeb) {
+        return 'web';
+      }
+      return switch (defaultTargetPlatform) {
+        TargetPlatform.android => 'android',
+        TargetPlatform.iOS => 'ios',
+        TargetPlatform.windows => 'windows',
+        TargetPlatform.macOS => 'macos',
+        TargetPlatform.linux => 'linux',
+        TargetPlatform.fuchsia => 'fuchsia',
+      };
   }
 }
 
@@ -189,8 +230,6 @@ Future<NodeExecResult> executeNode(ExecContext ctx) async {
     // ---- 变量 ----
     case 'variable_set':
       return _execVariableSet(ctx);
-    case 'device_var':
-      return _execDeviceVar(ctx);
 
     // ---- 代码运行 ----
     case 'code_run':
@@ -301,66 +340,40 @@ Future<NodeExecResult> executeNode(ExecContext ctx) async {
 // 变量节点
 // ===========================================================================
 
-/// variable_set：scope[funcVar 或动态] = resolveRef(params['value'])。
+/// variable_set：scope[projVar 或 funcVar] = resolveRef(params['value'])。
+///
+/// 节点参数：
+/// - [target]：目标变量类型，'projVar' / 'funcVar'（默认 'funcVar' 兼容旧 IR）。
+/// - [varId]：目标变量 id（项目变量 id 或当前函数的函数变量 id）。
+/// - [value]：要赋的值，可为字面量或 `#` 引用。
+///
+/// **限制**：
+/// - target == 'funcVar' 时仅能设置当前函数的 funcVars（按 varId 精确匹配）。
+/// - target == 'projVar' 时设置项目变量。
+/// - 不支持设置组件上下文变量（运行时注入，不可写）。
+/// - 不支持设置设备变量（只读）。
 Future<NodeExecResult> _execVariableSet(ExecContext ctx) async {
   final params = ctx.node.params;
-  final varName = params['varName']?.toString() ?? '';
+  final target = params['target']?.toString() ?? 'funcVar';
+  final varId = params['varId']?.toString() ?? '';
   final value = resolveRef(params['value'], ctx.scope);
-  // 按名匹配函数变量并赋值。
-  if (varName.isNotEmpty) {
-    for (final v in ctx.function.funcVars) {
-      if (v.name == varName) {
-        ctx.scope.setFuncVar(v.id, value);
-        break;
+  if (varId.isEmpty) {
+    return const NodeExecResult(nextControlOutput: 'next');
+  }
+  switch (target) {
+    case 'projVar':
+      ctx.scope.setProjVar(varId, value);
+      break;
+    case 'funcVar':
+    default:
+      // 仅当 varId 属于当前函数的 funcVars 时才设置（防止越权设置其他函数变量）。
+      final exists = ctx.function.funcVars.any((v) => v.id == varId);
+      if (exists) {
+        ctx.scope.setFuncVar(varId, value);
       }
-    }
+      break;
   }
   return const NodeExecResult(nextControlOutput: 'next');
-}
-
-/// device_var：读取设备只读属性。
-///
-/// [property] ∈ {deviceType, timezone, time}：
-/// - deviceType：'web' / 'android' / 'ios' / 'windows' / 'macos' / 'linux' / 'fuchsia'
-/// - timezone：时区名（[DateTime.timeZoneName] 为空时回退为 UTC±HH:MM 偏移）
-/// - time：当前时间 ISO8601 字符串
-Future<NodeExecResult> _execDeviceVar(ExecContext ctx) async {
-  final property = ctx.node.params['property']?.toString() ?? 'deviceType';
-  String value;
-  switch (property) {
-    case 'timezone':
-      final name = DateTime.now().timeZoneName;
-      if (name != null && name.isNotEmpty) {
-        value = name;
-      } else {
-        // 回退：基于 offset 的 UTC±HH:MM。
-        final offset = DateTime.now().timeZoneOffset;
-        final sign = offset.isNegative ? '-' : '+';
-        final hh = offset.inHours.abs().toString().padLeft(2, '0');
-        final mm = (offset.inMinutes.abs() % 60).toString().padLeft(2, '0');
-        value = 'UTC$sign$hh:$mm';
-      }
-    case 'time':
-      value = DateTime.now().toIso8601String();
-    case 'deviceType':
-    default:
-      if (kIsWeb) {
-        value = 'web';
-      } else {
-        value = switch (defaultTargetPlatform) {
-          TargetPlatform.android => 'android',
-          TargetPlatform.iOS => 'ios',
-          TargetPlatform.windows => 'windows',
-          TargetPlatform.macOS => 'macos',
-          TargetPlatform.linux => 'linux',
-          TargetPlatform.fuchsia => 'fuchsia',
-        };
-      }
-  }
-  return NodeExecResult(
-    nextControlOutput: 'next',
-    dataOutputs: {'value': value},
-  );
 }
 
 /// code_run：在 JS 沙箱中执行用户代码。
