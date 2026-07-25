@@ -291,6 +291,122 @@ class FunctionDef {
     return copyWith(nodes: newNodes, controlEdges: newEdges);
   }
 
+  /// 节点级迁移：把旧 `device_var` 节点 + 下游 `upstream` 引用迁移为
+  /// `#device:<property>` 直接引用。
+  ///
+  /// 旧 IR 中 `device_var` 是一个节点，下游节点通过
+  /// `VariableRef.upstream(nodeId: <device_var_id>, outputName: 'value')`
+  /// 引用其 `value` 输出。新 IR 中设备变量改为 `#device:<property>` 引用源，
+  /// 不再是节点。
+  ///
+  /// 迁移步骤：
+  /// 1. 收集所有 `device_var` 节点的 `{id → property}` 映射；
+  /// 2. 遍历剩余节点的 params，把指向 device_var 节点的 upstream 引用替换为
+  ///    `VariableRef.device(property: <对应 property>)`；
+  /// 3. 删除所有 device_var 节点（及其关联边）。
+  ///
+  /// 已无 device_var 节点的函数直接返回原值（幂等）。
+  FunctionDef migrateDeviceVar() {
+    final deviceVarNodes = nodes.where((n) => n.kind == 'device_var').toList();
+    if (deviceVarNodes.isEmpty) return this;
+
+    // 1. 建立 {device_var_id → property} 映射。
+    final propMap = <String, String>{};
+    for (final n in deviceVarNodes) {
+      final prop = n.params['property']?.toString() ?? 'deviceType';
+      propMap[n.id] = prop;
+    }
+
+    // 2. 把所有节点的 params 中指向 device_var 节点的 upstream 引用替换为
+    //    VariableRef.device(property: ...)。
+    final newNodes = <Node>[];
+    for (final n in nodes) {
+      if (n.kind == 'device_var') continue; // 删除 device_var 节点
+      if (n.params.isEmpty) {
+        newNodes.add(n);
+        continue;
+      }
+      final newParams = <String, dynamic>{};
+      bool changed = false;
+      for (final entry in n.params.entries) {
+        final v = entry.value;
+        if (v is Map<String, dynamic> && v.containsKey('source')) {
+          final ref = VariableRef.fromJson(v);
+          if (ref.source == VariableSource.upstream &&
+              ref.nodeId != null &&
+              propMap.containsKey(ref.nodeId)) {
+            newParams[entry.key] = VariableRef.device(property: propMap[ref.nodeId]!).toJson();
+            changed = true;
+            continue;
+          }
+        }
+        newParams[entry.key] = v;
+      }
+      newNodes.add(changed ? n.copyWith(params: newParams) : n);
+    }
+
+    // 3. 删除 device_var 节点关联的边。
+    final removedIds = deviceVarNodes.map((n) => n.id).toSet();
+    final newEdges = controlEdges
+        .where((e) =>
+            !removedIds.contains(e.fromNode) && !removedIds.contains(e.toNode))
+        .toList(growable: false);
+
+    return copyWith(nodes: newNodes, controlEdges: newEdges);
+  }
+
+  /// 节点级迁移：把旧 `variable_set` 节点的 `varName` 参数迁移为新的
+  /// `target` + `varId` 形式。
+  ///
+  /// 旧 IR：`{varName: "<函数变量名>", value: ...}` 仅支持当前函数变量。
+  /// 新 IR：`{target: "funcVar"|"projVar", varId: "<varId>", value: ...}`，
+  /// 其中 varId 是变量 id 而非变量名。
+  ///
+  /// 迁移规则：按 varName 在当前函数 funcVars 中匹配，命中则写入 varId；
+  /// 未命中保持原样（运行时会跳过空 varId）。
+  ///
+  /// 已是新格式（有 target 或 varId 参数）的节点直接返回原值（幂等）。
+  FunctionDef migrateVariableSet() {
+    bool needs = false;
+    for (final n in nodes) {
+      if (n.kind == 'variable_set' &&
+          !n.params.containsKey('target') &&
+          !n.params.containsKey('varId') &&
+          n.params.containsKey('varName')) {
+        needs = true;
+        break;
+      }
+    }
+    if (!needs) return this;
+
+    final newNodes = <Node>[];
+    for (final n in nodes) {
+      if (n.kind != 'variable_set' ||
+          n.params.containsKey('target') ||
+          n.params.containsKey('varId') ||
+          !n.params.containsKey('varName')) {
+        newNodes.add(n);
+        continue;
+      }
+      final varName = n.params['varName']?.toString() ?? '';
+      String? varId;
+      for (final v in funcVars) {
+        if (v.name == varName) {
+          varId = v.id;
+          break;
+        }
+      }
+      final newParams = Map<String, dynamic>.from(n.params);
+      newParams.remove('varName');
+      newParams['target'] = 'funcVar';
+      if (varId != null) {
+        newParams['varId'] = varId;
+      }
+      newNodes.add(n.copyWith(params: newParams));
+    }
+    return copyWith(nodes: newNodes);
+  }
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -371,7 +487,7 @@ class FunctionDef {
                 .toList() ??
             const [],
         version: (json['version'] as num?)?.toInt() ?? 1,
-      ).migrateSignature().migrateNodes();
+      ).migrateSignature().migrateNodes().migrateDeviceVar().migrateVariableSet();
 
   @override
   String toString() => 'FunctionDef($name#$id)';

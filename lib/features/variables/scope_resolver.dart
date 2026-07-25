@@ -283,7 +283,7 @@ class ScopeResolver {
     );
   }
 
-  /// 按 [name]（大小写不敏感）跨四来源匹配候选变量。
+  /// 按 [name]（大小写不敏感）跨五来源匹配候选变量。
   ///
   /// 匹配规则：
   /// - 上游输出按 [UpstreamOutput.outputName] 匹配；
@@ -292,6 +292,8 @@ class ScopeResolver {
   /// - 组件上下文按 [ComponentContextVar.fieldName] 匹配（支持 `item` 与
   ///   `item.name` 点路径；输入 `item` 同时命中所有 `item.*` 前缀字段，
   ///   交由卡片让用户进一步选择具体字段）。
+  /// - 设备变量按 [DeviceProperty.labelOf] 中文名或属性名匹配
+  ///   （如 "时区" / "timezone" 均命中 [DeviceProperty.timezone]）。
   ///
   /// 返回候选的 [VariableRef] 列表（保留来源信息，供调用方冲突标注）。
   /// 列表长度：
@@ -351,6 +353,14 @@ class ScopeResolver {
           p.funcName.toLowerCase() == lower ||
           '${p.funcName}.${p.outputName}'.toLowerCase() == lower) {
         refs.add(p.toRef());
+      }
+    }
+    // 设备变量：匹配属性名（deviceType/timezone/time）或中文展示名
+    // （设备类型/时区/当前时间）。
+    for (final prop in DeviceProperty.all) {
+      if (prop.toLowerCase() == lower ||
+          DeviceProperty.labelOf(prop).toLowerCase() == lower) {
+        refs.add(VariableRef.device(property: prop));
       }
     }
     return refs;

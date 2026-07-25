@@ -24,6 +24,11 @@ windows/flutter/ephemeral/
 # Trae cache (specs 目录保留提交)
 .trae/cache/
 
+# Local build / test artifacts (临时构建产物，不入库)
+test_artifacts/
+web_build/
+web_deploy/
+
 # Secrets
 *.keystore
 *.jks

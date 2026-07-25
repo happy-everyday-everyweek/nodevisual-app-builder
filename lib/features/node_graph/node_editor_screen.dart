@@ -10,6 +10,7 @@ import '../../data/models/function_def.dart';
 import '../../data/models/node.dart';
 import '../../data/models/port.dart';
 import '../../data/models/project.dart';
+import '../../data/models/project_variable.dart';
 import '../../data/models/variable_ref.dart';
 import '../plugins/plugin_config_sheet.dart';
 import '../plugins/plugin_registry.dart';
@@ -252,6 +253,13 @@ class _NodeEditorBody extends ConsumerWidget {
           functions: p.name == 'targetFunctionId' && spec?.kind == 'function_call'
               ? project?.functions ?? const []
               : const [],
+          // variable_set 的 varId：按 target 动态填充候选变量。
+          // - target == 'funcVar'：当前函数的 funcVars（自然限定为本函数变量）
+          // - target == 'projVar'：项目的 projectVars
+          labelOptions:
+              spec?.kind == 'variable_set' && p.name == 'varId'
+                  ? _variableSetVarIdOptions()
+                  : null,
           onChanged: (v) => _commitParam(ref, p.name, v),
         );
       case ParamInputType.listStrings:
@@ -288,6 +296,29 @@ class _NodeEditorBody extends ConsumerWidget {
           onClearRef: () => _commitParam(ref, p.name, null),
         );
     }
+  }
+
+  /// 为 variable_set 节点的 varId 参数构造候选变量列表。
+  ///
+  /// 按 node.params['target'] 决定来源：
+  /// - 'funcVar'（默认）：当前函数的 funcVars（id → "名称 : 类型"）。
+  ///   自然限定为本函数变量（节点所在函数），符合"设置变量节点设置的函数变量
+  ///   只能设置节点所在函数的变量"的语义。
+  /// - 'projVar'：项目的 projectVars（id → "名称 : 类型"）。
+  List<({String value, String label})> _variableSetVarIdOptions() {
+    final target = node.params['target']?.toString() ?? 'funcVar';
+    if (target == 'projVar') {
+      final vars = project?.projectVars ?? const <ProjectVariable>[];
+      return [
+        for (final v in vars)
+          (value: v.id, label: '${v.name} : ${v.type.toJson()}'),
+      ];
+    }
+    // funcVar：仅当前函数的变量。
+    return [
+      for (final v in functionDef.funcVars)
+        (value: v.id, label: '${v.name} : ${v.type.toJson()}'),
+    ];
   }
 
   /// function_call 动态入参字段：按目标函数 [FunctionDef.inputs] 生成。
@@ -794,13 +825,15 @@ class _BoolParamField extends StatelessWidget {
   }
 }
 
-/// 下拉参数（function_call 的 targetFunctionId 由项目函数列表填充）。
+/// 下拉参数（function_call 的 targetFunctionId 由项目函数列表填充；
+/// variable_set 的 varId 由 labelOptions 动态填充）。
 class _DropdownParamField extends StatelessWidget {
   const _DropdownParamField({
     required this.spec,
     required this.value,
     required this.functions,
     required this.onChanged,
+    this.labelOptions,
   });
 
   final ParamSpec spec;
@@ -808,13 +841,37 @@ class _DropdownParamField extends StatelessWidget {
   final List<FunctionDef> functions;
   final ValueChanged<String> onChanged;
 
+  /// 动态候选选项（value → label），优先于 [functions] 与 [spec.options]。
+  ///
+  /// 用于 variable_set 的 varId：按 target 来源动态填充候选变量。
+  final List<({String value, String label})>? labelOptions;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final items = <DropdownMenuItem<String>>[];
     final useFunctions = functions.isNotEmpty;
+    final useLabelOptions = labelOptions != null && labelOptions!.isNotEmpty;
 
-    if (useFunctions) {
+    if (useLabelOptions) {
+      for (final opt in labelOptions!) {
+        items.add(DropdownMenuItem(value: opt.value, child: Text(opt.label)));
+      }
+      // 若当前值不在候选中（变量已删除 / target 切换后旧 varId 失效），
+      // 追加占位项避免崩溃。
+      if (value.isNotEmpty &&
+          !labelOptions!.any((o) => o.value == value)) {
+        items.add(
+          DropdownMenuItem(
+            value: value,
+            child: Text(
+              '$value（已删除）',
+              style: TextStyle(color: theme.colorScheme.error),
+            ),
+          ),
+        );
+      }
+    } else if (useFunctions) {
       for (final f in functions) {
         items.add(DropdownMenuItem(value: f.id, child: Text(f.name)));
       }
@@ -849,7 +906,9 @@ class _DropdownParamField extends StatelessWidget {
           DropdownButtonFormField<String>(
             value: hasValue ? value : null,
             items: items,
-            hint: const Text('选择…'),
+            hint: Text(useLabelOptions && items.isEmpty
+                ? '无可用变量'
+                : '选择…'),
             decoration: const InputDecoration(
               isDense: true,
               border: OutlineInputBorder(),

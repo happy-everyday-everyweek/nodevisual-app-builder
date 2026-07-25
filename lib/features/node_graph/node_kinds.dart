@@ -255,16 +255,27 @@ class NodeKindRegistry {
 
   static Map<String, NodeKindSpec> _buildSpecs() {
     final specs = <NodeKindSpec>[
-      // ---- 变量（精简：仅 variable_set，读取用 # 引用）----
+      // ---- 变量（仅 variable_set；读取用 # 引用，设备变量也已迁移为 # 引用源）----
       NodeKindSpec(
         kind: 'variable_set',
         displayName: '设置变量',
         category: NodeCategory.variable,
         paramSchema: const [
           ParamSpec(
-            name: 'varName',
-            label: '变量名',
-            inputType: ParamInputType.text,
+            name: 'target',
+            label: '目标类型',
+            inputType: ParamInputType.dropdown,
+            options: ['funcVar', 'projVar'],
+            defaultValue: 'funcVar',
+          ),
+          // varId 由节点编辑页按 target 动态渲染：
+          // - target == 'funcVar'：从当前函数 funcVars 中选择
+          // - target == 'projVar'：从项目 projectVars 中选择
+          // 此处仅声明 schema，实际选项覆盖在节点编辑页。
+          ParamSpec(
+            name: 'varId',
+            label: '目标变量',
+            inputType: ParamInputType.dropdown,
             defaultValue: '',
           ),
           ParamSpec(
@@ -276,24 +287,6 @@ class NodeKindRegistry {
           ),
         ],
         defaultControlOutputs: ['next'],
-      ),
-
-      // ---- 设备变量（只读：设备类型 / 时区 / 时间）----
-      NodeKindSpec(
-        kind: 'device_var',
-        displayName: '设备变量',
-        category: NodeCategory.variable,
-        paramSchema: const [
-          ParamSpec(
-            name: 'property',
-            label: '属性',
-            inputType: ParamInputType.dropdown,
-            options: ['deviceType', 'timezone', 'time'],
-            defaultValue: 'deviceType',
-          ),
-        ],
-        defaultControlOutputs: ['next'],
-        defaultDataOutputs: [(name: 'value', type: PortType.string)],
       ),
 
       // ---- 运算 ----

@@ -6,7 +6,6 @@ import '../../core/constants.dart';
 import '../../data/models/entry.dart';
 import '../../data/models/function_def.dart';
 import '../../data/models/node.dart';
-import '../../data/models/port.dart';
 import '../marketplace/marketplace_providers.dart';
 import 'connection_painter.dart';
 import 'dag_validator.dart';
@@ -23,8 +22,13 @@ import 'node_widget.dart';
 /// 画布层（控制平面）：
 /// - [InteractiveViewer] 提供双指缩放 + 双指平移；
 /// - 内部 Stack 为虚拟画布坐标系，节点用 [Positioned] 摆放；
-/// - [CustomPaint] + [ConnectionPainter] 绘制控制流连线与拖拽中的临时连线；
-/// - 单指拖节点 body 移动节点；单指拖端口画线；长按节点选中；长按连线删除。
+/// - [CustomPaint] + [ConnectionPainter] 绘制控制流连线；
+/// - 指针模式：单击打开节点编辑页 / 长按选中 / 拖拽移动节点；
+/// - 连线模式：两步点击式（先点击起始节点，再点击终止节点建立连线），
+///   多输出节点弹出端口选择菜单。长按连线删除。
+///
+/// **核心语义**：连线仅代表执行顺序，与参数传递无关。参数通过节点
+/// [Node.params] 中的 `#` 引用（[VariableRef]）独立完成，与控制流边解耦。
 ///
 /// 数据平面（节点编辑页）由 Task 5/7 实现，本屏幕不展开。
 class FunctionEditorScreen extends ConsumerStatefulWidget {
@@ -47,20 +51,20 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
       TransformationController();
   final GlobalKey _viewerKey = GlobalKey();
 
-  // 连线拖拽中的临时状态（仅本地 UI）。
-  String? _dragFromNode;
-  String? _dragFromPort;
-  Offset? _dragFromCanvasPos;
-  Offset? _dragCurrentCanvasPos;
+  // 连线模式下的"已选中起始节点 + 端口"状态（仅本地 UI）。
+  //
+  // 连线交互采用两步点击式：
+  // 1. 第一次点击节点 → 设为起始（多输出节点弹出端口选择菜单）；
+  // 2. 第二次点击另一节点 → 建立控制流连线（仅代表执行顺序）。
+  // 点击空白或同一节点 → 取消起始选择。
+  String? _connectSourceNode;
+  String? _connectSourcePort;
 
   // 当前选中的连线键（"fromNode:fromPort:toNode"），用于高亮 + 删除。
   String? _selectedEdgeKey;
 
   /// 当前编辑器交互模式（指针 / 连线 / 添加）。
   NodeEditorMode _mode = NodeEditorMode.pointer;
-
-  /// 连线模式下当前拖拽悬停的目标节点 id（高亮 + 命中判定）。
-  String? _connectHoverTarget;
 
   /// 添加模式下是否展开节点面板。
   bool _paletteExpanded = false;
@@ -225,147 +229,143 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
 
   // ---- 连线交互 ----
 
-  /// 连线模式拖拽起点：以源节点的第一个控制流输出端口作为 fromPort。
-  void _onConnectionDragStart(String nodeId) {
+  /// 连线模式：节点点击回调（两步点击式连线）。
+  ///
+  /// 流程：
+  /// 1. 无起始节点时：本次点击的节点作为起始。若该节点有多个控制流输出端口，
+  ///    弹出端口选择菜单；否则直接用第一个（唯一）端口。
+  /// 2. 已有起始节点时：本次点击的节点作为终止，建立控制流连线。
+  ///    - 同一节点再次点击 → 取消起始选择（避免自环）；
+  ///    - 不同节点 → 调用 [GraphMutator.addEdge] 建立连线；
+  ///    - 成功后保留起始节点与端口，便于连续建立多条连线（v1 改为清除，
+  ///      避免视觉混乱）。
+  ///
+  /// 连线仅代表执行顺序，与参数传递无关。
+  void _onNodeConnectTap(String nodeId) {
     final fn = ref.read(graphMutatorProvider);
     if (fn == null) return;
-    Node? nodeFound;
+    Node? node;
     for (final n in fn.nodes) {
       if (n.id == nodeId) {
-        nodeFound = n;
+        node = n;
         break;
       }
     }
-    final node = nodeFound;
-    if (node == null || node.controlOutputs.isEmpty) return;
-    final fromPort = node.controlOutputs.first.name;
-    final portIndex = node.controlOutputs.indexWhere((p) => p.name == fromPort);
-    if (portIndex < 0) return;
-    final off = NodeLayout.outputPortOffset(portIndex);
-    final origin = node.position;
-    final fromPos = Offset(origin.x + off.dx, origin.y + off.dy);
-    setState(() {
-      _dragFromNode = nodeId;
-      _dragFromPort = fromPort;
-      _dragFromCanvasPos = fromPos;
-      _dragCurrentCanvasPos = fromPos;
-    });
-  }
+    if (node == null) return;
 
-  void _onConnectionDragUpdate(Offset globalPosition) {
-    final canvasPos = _globalToCanvas(globalPosition);
-    if (canvasPos == null) return;
-    // 实时计算悬停目标节点（用于高亮）。
-    final fn = ref.read(graphMutatorProvider);
-    String? hoverTarget;
-    if (fn != null && _dragFromNode != null) {
-      double bestDist = double.infinity;
-      for (final node in fn.nodes) {
-        if (node.id == _dragFromNode) continue;
-        // 以节点中心为命中点。
-        final center = Offset(
-          node.position.x + NodeLayout.width / 2,
-          node.position.y + NodeLayout.headerHeight / 2,
-        );
-        final d = (center - canvasPos).distance;
-        // 命中阈值：节点对角线一半 + 余量。
-        final halfDiag = (NodeLayout.width / 2) * 1.2;
-        if (d < halfDiag && d < bestDist) {
-          bestDist = d;
-          hoverTarget = node.id;
-        }
+    // 已有起始节点：本次点击作为终止。
+    final sourceNode = _connectSourceNode;
+    final sourcePort = _connectSourcePort;
+    if (sourceNode != null && sourcePort != null) {
+      if (nodeId == sourceNode) {
+        // 同一节点 → 取消起始选择。
+        setState(() {
+          _connectSourceNode = null;
+          _connectSourcePort = null;
+        });
+        return;
       }
-    }
-    setState(() {
-      _dragCurrentCanvasPos = canvasPos;
-      _connectHoverTarget = hoverTarget;
-    });
-  }
-
-  void _onConnectionDragEnd(Offset? globalPosition) {
-    final dragFromNode = _dragFromNode;
-    final dragFromPort = _dragFromPort;
-    final dragFromPos = _dragFromCanvasPos;
-    final hoverTarget = _connectHoverTarget;
-    final endCanvasPos =
-        globalPosition == null ? _dragCurrentCanvasPos : _globalToCanvas(globalPosition);
-
-    // 清理拖拽状态。
-    setState(() {
-      _dragFromNode = null;
-      _dragFromPort = null;
-      _dragFromCanvasPos = null;
-      _dragCurrentCanvasPos = null;
-      _connectHoverTarget = null;
-    });
-
-    if (dragFromNode == null ||
-        dragFromPort == null ||
-        dragFromPos == null ||
-        endCanvasPos == null) {
+      final result = ref.read(graphMutatorProvider.notifier).addEdge(
+            fromNode: sourceNode,
+            fromPort: sourcePort,
+            toNode: nodeId,
+          );
+      if (!mounted) return;
+      switch (result) {
+        case AddEdgeResult.cycle:
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('连线会形成环，已拒绝'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+          break;
+        case AddEdgeResult.invalid:
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('端口或节点不存在，已忽略'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+          break;
+        case AddEdgeResult.success:
+          // 静默成功（v1 无须提示）。
+          break;
+      }
+      // 建立后清除起始选择（v1：避免视觉混乱，每次只建一根连线）。
+      setState(() {
+        _connectSourceNode = null;
+        _connectSourcePort = null;
+      });
       return;
     }
 
-    // 优先使用拖拽过程中识别的悬停目标节点；否则回退到最近命中。
-    String? bestTarget = hoverTarget;
-    if (bestTarget == null) {
-      final fn = ref.read(graphMutatorProvider);
-      if (fn == null) return;
-      double bestDist = double.infinity;
-      for (final node in fn.nodes) {
-        if (node.id == dragFromNode) continue;
-        final center = Offset(
-          node.position.x + NodeLayout.width / 2,
-          node.position.y + NodeLayout.headerHeight / 2,
-        );
-        final d = (center - endCanvasPos).distance;
-        final halfDiag = (NodeLayout.width / 2) * 1.2;
-        if (d < halfDiag && d < bestDist) {
-          bestDist = d;
-          bestTarget = node.id;
-        }
-      }
+    // 无起始节点：本次点击作为起始。
+    if (node.controlOutputs.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('该节点无控制流输出端口，无法作为连线起点'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      return;
     }
-
-    if (bestTarget == null) return;
-
-    final result = ref.read(graphMutatorProvider.notifier).addEdge(
-          fromNode: dragFromNode,
-          fromPort: dragFromPort,
-          toNode: bestTarget,
-        );
-    if (!mounted) return;
-    switch (result) {
-      case AddEdgeResult.cycle:
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('连线会形成环，已拒绝'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-        break;
-      case AddEdgeResult.invalid:
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('端口或节点不存在，已忽略'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-        break;
-      case AddEdgeResult.success:
-        // 静默成功（v1 无须提示）。
-        break;
+    if (node.controlOutputs.length == 1) {
+      // 单输出节点：直接选中。
+      setState(() {
+        _connectSourceNode = nodeId;
+        _connectSourcePort = node.controlOutputs.first.name;
+      });
+      return;
     }
+    // 多输出节点：弹出端口选择菜单。
+    _showPortSelectionMenu(node);
   }
 
-  void _onConnectionDragCancel() {
-    setState(() {
-      _dragFromNode = null;
-      _dragFromPort = null;
-      _dragFromCanvasPos = null;
-      _dragCurrentCanvasPos = null;
-      _connectHoverTarget = null;
-    });
+  /// 多输出节点的控制流输出端口选择菜单（连线模式起始端口选择）。
+  void _showPortSelectionMenu(Node node) {
+    final ports = node.controlOutputs
+        .map((p) => p.name)
+        .toList(growable: false);
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 8, 8, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 8,),
+                  child: Text(
+                    '选择起始端口 — ${node.params['name']?.toString() ?? node.kind}',
+                    style: theme.textTheme.titleSmall,
+                  ),
+                ),
+                const Divider(height: 1),
+                for (final port in ports)
+                  ListTile(
+                    leading: Icon(Icons.arrow_outward,
+                        size: 20, color: theme.colorScheme.tertiary,),
+                    title: Text(port),
+                    onTap: () {
+                      Navigator.pop(ctx);
+                      setState(() {
+                        _connectSourceNode = node.id;
+                        _connectSourcePort = port;
+                      });
+                    },
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   // ---- 连线选中 / 删除 ----
@@ -429,6 +429,13 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
     }
     if (_selectedEdgeKey != null) {
       setState(() => _selectedEdgeKey = null);
+    }
+    // 连线模式下点击空白 → 取消已选中的起始节点。
+    if (_connectSourceNode != null) {
+      setState(() {
+        _connectSourceNode = null;
+        _connectSourcePort = null;
+      });
     }
   }
 
@@ -551,13 +558,12 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
                   bottom: 0,
                   child: _buildCapsuleToolbar(theme),
                 ),
-                if (_dragFromCanvasPos != null &&
-                    _dragCurrentCanvasPos != null)
+                if (_mode == NodeEditorMode.connect && _connectSourceNode != null)
                   Positioned(
                     left: 0,
                     right: 0,
                     top: 0,
-                    child: _buildDragHint(theme),
+                    child: _buildConnectHint(theme, fn),
                   ),
               ],
             );
@@ -609,9 +615,6 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
                   color: theme.colorScheme.primary,
                   selectedEdgeKey: _selectedEdgeKey,
                   selectedColor: theme.colorScheme.error,
-                  dragFrom: _dragFromCanvasPos,
-                  dragTo: _dragCurrentCanvasPos,
-                  dragColor: theme.colorScheme.tertiary,
                 ),
               ),
             ),
@@ -629,11 +632,8 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
                   onDelete: () => _onNodeDelete(node.id),
                   onDragUpdate: (details) =>
                       _onNodeDragUpdate(node.id, details),
-                  onConnectionDragStart: _onConnectionDragStart,
-                  onConnectionDragUpdate: _onConnectionDragUpdate,
-                  onConnectionDragEnd: _onConnectionDragEnd,
-                  onConnectionDragCancel: _onConnectionDragCancel,
-                  isConnectionTarget: node.id == _connectHoverTarget,
+                  onConnectTap: _onNodeConnectTap,
+                  isConnectionSource: node.id == _connectSourceNode,
                 ),
               ),
           ],
@@ -720,7 +720,8 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
 
   /// 切换编辑器模式。
   ///
-  /// 切换到"添加"时默认展开节点面板；切换到其它模式时折叠面板并清除连线拖拽态。
+  /// 切换到"添加"时默认展开节点面板；切换到其它模式时折叠面板并清除
+  /// 连线起始选择态。
   void _switchMode(NodeEditorMode newMode) {
     setState(() {
       _mode = newMode;
@@ -729,12 +730,9 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
       } else {
         _paletteExpanded = false;
       }
-      // 切换模式时清理未完成的连线拖拽。
-      _dragFromNode = null;
-      _dragFromPort = null;
-      _dragFromCanvasPos = null;
-      _dragCurrentCanvasPos = null;
-      _connectHoverTarget = null;
+      // 切换模式时清理未完成的连线起始选择。
+      _connectSourceNode = null;
+      _connectSourcePort = null;
     });
   }
 
@@ -797,7 +795,21 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
     );
   }
 
-  Widget _buildDragHint(ThemeData theme) {
+  Widget _buildConnectHint(ThemeData theme, FunctionDef fn) {
+    final sourceNode = _connectSourceNode;
+    final sourcePort = _connectSourcePort;
+    String sourceLabel = '';
+    if (sourceNode != null) {
+      for (final n in fn.nodes) {
+        if (n.id == sourceNode) {
+          final name = n.params['name']?.toString();
+          sourceLabel = (name != null && name.isNotEmpty)
+              ? '$name${sourcePort != null ? ' · $sourcePort' : ''}'
+              : '${n.kind}${sourcePort != null ? ' · $sourcePort' : ''}';
+          break;
+        }
+      }
+    }
     return Align(
       alignment: Alignment.topCenter,
       child: Padding(
@@ -815,7 +827,9 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
                     size: 14, color: theme.colorScheme.onTertiaryContainer,),
                 const SizedBox(width: 4),
                 Text(
-                  '拖到目标节点上释放以建立连线',
+                  sourceLabel.isEmpty
+                      ? '点击起始节点（连线仅代表执行顺序）'
+                      : '已选起点：$sourceLabel，点击目标节点建立连线',
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: theme.colorScheme.onTertiaryContainer,
                   ),

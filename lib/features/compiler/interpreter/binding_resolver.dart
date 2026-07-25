@@ -1,7 +1,43 @@
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, TargetPlatform;
+
 import '../../data/models/port.dart';
 import '../../data/models/ui_tree.dart';
 import '../../data/models/variable_ref.dart';
 import 'runtime_scope.dart';
+
+/// 解析设备变量属性为运行时值。
+///
+/// 与 [node_executors.dart] 中的同名函数保持一致；放在此处避免 binding_resolver
+/// 反向依赖 node_executors。
+String _resolveDeviceProperty(String property) {
+  switch (property) {
+    case DeviceProperty.timezone:
+      final name = DateTime.now().timeZoneName;
+      if (name != null && name.isNotEmpty) {
+        return name;
+      }
+      final offset = DateTime.now().timeZoneOffset;
+      final sign = offset.isNegative ? '-' : '+';
+      final hh = offset.inHours.abs().toString().padLeft(2, '0');
+      final mm = (offset.inMinutes.abs() % 60).toString().padLeft(2, '0');
+      return 'UTC$sign$hh:$mm';
+    case DeviceProperty.time:
+      return DateTime.now().toIso8601String();
+    case DeviceProperty.deviceType:
+    default:
+      if (kIsWeb) {
+        return 'web';
+      }
+      return switch (defaultTargetPlatform) {
+        TargetPlatform.android => 'android',
+        TargetPlatform.iOS => 'ios',
+        TargetPlatform.windows => 'windows',
+        TargetPlatform.macOS => 'macos',
+        TargetPlatform.linux => 'linux',
+        TargetPlatform.fuchsia => 'fuchsia',
+      };
+  }
+}
 
 /// UI 绑定解析结果。
 ///
@@ -119,6 +155,13 @@ class BindingResolver {
           return _applyStrategy(strategy, expectedType, binding.placeholderText);
         }
         return BindingResolveResult.ready(ctx.get(ref.fieldName!));
+      case VariableSource.device:
+        // 设备变量：只读属性，运行时永远就绪（无外部依赖）。
+        if (ref.property == null) {
+          return _applyStrategy(strategy, expectedType, binding.placeholderText);
+        }
+        return BindingResolveResult.ready(
+            _resolveDeviceProperty(ref.property!));
     }
   }
 

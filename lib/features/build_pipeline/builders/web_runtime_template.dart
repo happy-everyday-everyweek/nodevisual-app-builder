@@ -82,13 +82,45 @@ class WebRuntimeTemplate {
       if (r.source === "upstream") {
         return scope.getOutput(r.nodeId, r.outputName);
       } else if (r.source === "funcVar") {
+        // 页面级函数 outputs：按状态机返回（仅在 done 时返回缓存值）。
+        if (r.funcId && r.outputName) {
+          const entry = scope.getPageFuncEntry && scope.getPageFuncEntry(r.funcId);
+          if (!entry || entry.state !== "done") return undefined;
+          return entry.outputs[r.outputName];
+        }
         return scope.getFuncVar(r.varId);
       } else if (r.source === "projVar") {
         return scope.getProjVar(r.varId);
+      } else if (r.source === "component") {
+        if (!r.componentId || !r.fieldName) return undefined;
+        const ctx = findComponentContext(r.componentId);
+        return ctx ? ctx.fields.get(r.fieldName) : undefined;
+      } else if (r.source === "device") {
+        return resolveDeviceProperty(r.property);
       }
       return undefined;
     }
     return value;
+  }
+
+  // 设备变量属性解析（与 Dart 端 _resolveDeviceProperty 对齐）。
+  function resolveDeviceProperty(property) {
+    switch (property) {
+      case "timezone": {
+        // 浏览器 Intl.DateTimeFormat 给出 IANA 时区名（如 "Asia/Shanghai"）。
+        try {
+          return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+        } catch (_) {
+          return "UTC";
+        }
+      }
+      case "time":
+        return new Date().toISOString();
+      case "deviceType":
+      default:
+        // Web 端始终为 "web"。
+        return "web";
+    }
   }
 
   // 组件上下文栈（运行时按组件树位置注入）。
@@ -198,11 +230,21 @@ class WebRuntimeTemplate {
     switch (node.kind) {
       case "variable_set": {
         const v = resolveRef(params.value, scope);
-        if (params.varName) scope.setFuncVar(params.varName, v);
+        const target = params.target || "funcVar";
+        const varId = params.varId;
+        if (!varId) return { outputs: { value: v } };
+        if (target === "projVar") {
+          scope.setProjVar(varId, v);
+        } else {
+          // funcVar：仅当 varId 属于当前函数 funcVars 时才设置（防越权）。
+          const exists = (func.funcVars || []).some(v => v.id === varId);
+          if (exists) scope.setFuncVar(varId, v);
+        }
         return { outputs: { value: v } };
       }
       case "variable_get": {
-        const v = scope.getFuncVar(params.varName);
+        // 兼容旧 IR；新项目应通过 # 引用读取。
+        const v = scope.getFuncVar(params.varId || params.varName);
         return { outputs: { value: v } };
       }
       case "arithmetic": {
@@ -342,28 +384,6 @@ class WebRuntimeTemplate {
         } catch (e) {
           throw new Error("code_run 执行失败：" + e.message);
         }
-      }
-      case "device_var": {
-        // 设备只读属性：deviceType / timezone / time。
-        const prop = params.property || "deviceType";
-        let v;
-        if (prop === "time") {
-          v = new Date().toISOString();
-        } else if (prop === "timezone") {
-          try {
-            v = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-          } catch (e) {
-            const off = -new Date().getTimezoneOffset();
-            const sign = off >= 0 ? "+" : "-";
-            const hh = String(Math.abs(off) / 60 | 0).padStart(2, "0");
-            const mm = String(Math.abs(off) % 60).padStart(2, "0");
-            v = "UTC" + sign + hh + ":" + mm;
-          }
-        } else {
-          // Web 运行时设备类型恒为 web。
-          v = "web";
-        }
-        return { outputs: { value: v } };
       }
       default:
         if (node.kind && node.kind.indexOf("db_") === 0) {

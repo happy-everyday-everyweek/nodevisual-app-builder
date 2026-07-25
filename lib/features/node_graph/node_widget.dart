@@ -9,7 +9,10 @@ enum NodeEditorMode {
   /// 指针：移动节点 / 平移画布，节点拖到屏幕边缘时画布自动跟随。
   pointer,
 
-  /// 连线：从节点拖到另一节点建立控制流连线。
+  /// 连线：点击起始节点 → 点击终止节点建立控制流连线。
+  ///
+  /// 连线仅代表执行顺序，与参数传递无关。多输出节点（如 if/loop）点击时
+  /// 若有多个控制流输出端口，弹出菜单让用户选择从哪个端口出发。
   connect,
 
   /// 添加：打开节点面板。
@@ -28,7 +31,8 @@ enum NodeEditorMode {
 /// rows    [list]
 /// ```
 ///
-/// 无端口圆点：连线交互由 [NodeEditorMode.connect] 模式下整卡拖拽完成。
+/// 无端口圆点：连线交互由 [NodeEditorMode.connect] 模式下两步点击完成
+/// （先点击起始节点，再点击终止节点）。连线仅表达执行顺序，不参与参数传递。
 class NodeCard extends StatefulWidget {
   const NodeCard({
     super.key,
@@ -39,11 +43,8 @@ class NodeCard extends StatefulWidget {
     this.onOpenEditor,
     this.onDelete,
     this.onDragUpdate,
-    this.onConnectionDragStart,
-    this.onConnectionDragUpdate,
-    this.onConnectionDragEnd,
-    this.onConnectionDragCancel,
-    this.isConnectionTarget = false,
+    this.onConnectTap,
+    this.isConnectionSource = false,
   });
 
   /// 节点数据。
@@ -67,20 +68,14 @@ class NodeCard extends StatefulWidget {
   /// 节点拖拽更新回调（指针模式下移动节点）。
   final ValueChanged<DragUpdateDetails>? onDragUpdate;
 
-  /// 连线模式：从该节点开始拖拽连线（参数：节点 id）。
-  final ValueChanged<String>? onConnectionDragStart;
+  /// 连线模式：点击该节点（参数：节点 id）。
+  ///
+  /// 由父组件决定是"作为起始节点选中"还是"作为终止节点建立连线"，
+  /// 多输出节点的端口选择也由父组件弹出菜单处理。
+  final ValueChanged<String>? onConnectTap;
 
-  /// 连线模式：拖拽过程中（参数：当前指针全局坐标）。
-  final ValueChanged<Offset>? onConnectionDragUpdate;
-
-  /// 连线模式：拖拽结束（参数：当前指针全局坐标，可空）。
-  final ValueChanged<Offset?>? onConnectionDragEnd;
-
-  /// 连线模式：拖拽取消。
-  final VoidCallback? onConnectionDragCancel;
-
-  /// 连线模式下是否为当前拖拽的目标节点（高亮）。
-  final bool isConnectionTarget;
+  /// 连线模式下是否为当前选中的起始节点（高亮）。
+  final bool isConnectionSource;
 
   @override
   State<NodeCard> createState() => _NodeCardState();
@@ -124,7 +119,13 @@ class _NodeCardState extends State<NodeCard>
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
     final isConnect = widget.mode == NodeEditorMode.connect;
-    final isTarget = widget.isConnectionTarget;
+    final isSource = widget.isConnectionSource;
+
+    // 连线模式下：起始节点用 tertiary；其余用 outline（选中态用 primary）。
+    final borderColor = isSource
+        ? cs.tertiary
+        : (widget.selected ? cs.primary : cs.outlineVariant);
+    final borderWidth = isSource || widget.selected ? 1.5 : 1;
 
     return ScaleTransition(
       scale: Tween<double>(begin: 0.96, end: 1.0).animate(_appearAnim),
@@ -141,10 +142,8 @@ class _NodeCardState extends State<NodeCard>
               color: cs.surface,
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                color: isTarget
-                    ? cs.tertiary
-                    : (widget.selected ? cs.primary : cs.outlineVariant),
-                width: isTarget || widget.selected ? 1.5 : 1,
+                color: borderColor,
+                width: borderWidth,
               ),
               boxShadow: [
                 BoxShadow(
@@ -163,20 +162,14 @@ class _NodeCardState extends State<NodeCard>
   }
 
   Widget _buildBody(ThemeData theme, ColorScheme cs, bool isConnect) {
-    // 连线模式：整卡作为拖拽源，使用 Pan 手势。
+    // 连线模式：单击作为起始或终止节点（两步点击式连线）。
+    // 多输出节点的端口选择由父组件 onConnectTap 弹出菜单处理。
     if (isConnect) {
       return GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onPanStart: widget.onConnectionDragStart == null
+        onTap: widget.onConnectTap == null
             ? null
-            : (_) => widget.onConnectionDragStart!(widget.node.id),
-        onPanUpdate: widget.onConnectionDragUpdate == null
-            ? null
-            : (d) => widget.onConnectionDragUpdate!(d.globalPosition),
-        onPanEnd: widget.onConnectionDragEnd == null
-            ? null
-            : (d) => widget.onConnectionDragEnd!(d.globalPosition),
-        onPanCancel: widget.onConnectionDragCancel,
+            : () => widget.onConnectTap!(widget.node.id),
         child: _buildColumn(theme, cs),
       );
     }
@@ -338,8 +331,6 @@ class _NodeCardState extends State<NodeCard>
       case 'variable_set':
       case 'variable_get':
         return Icons.label_outline;
-      case 'device_var':
-        return Icons.devices_outlined;
       case 'arithmetic':
         return Icons.calculate_outlined;
       case 'logic':

@@ -7,11 +7,13 @@ import 'node_layout.dart';
 ///
 /// 在画布坐标系（即 [InteractiveViewer] 内部 Stack 的坐标系）下绘制：
 /// - 已建立的 [ControlEdge] 列表，用贝塞尔曲线连接源端口与目标入口端口；
-/// - 拖拽中的临时连线（[dragFrom] -> [dragTo]）；
 /// - 选中态连线高亮。
 ///
 /// 端口位置由外部通过 [portPositions] 提供（键为 [portKey] 计算结果，
 /// 入口端口键为 `nodeId:in`）。
+///
+/// **连线语义**：连线仅表达执行顺序与控制流分支，与参数传递无关。
+/// 数据平面通过节点 [Node.params] 中的 `#` 引用独立完成。
 class ConnectionPainter extends CustomPainter {
   ConnectionPainter({
     required this.edges,
@@ -19,9 +21,6 @@ class ConnectionPainter extends CustomPainter {
     required this.color,
     this.selectedEdgeKey,
     this.selectedColor = const Color(0xFFE53935),
-    this.dragFrom,
-    this.dragTo,
-    this.dragColor,
     super.repaint,
   });
 
@@ -39,15 +38,6 @@ class ConnectionPainter extends CustomPainter {
 
   /// 选中边的键（`fromNode:fromPort:toNode`），null 表示无选中。
   final String? selectedEdgeKey;
-
-  /// 拖拽中临时连线起点（画布坐标），null 表示无拖拽。
-  final Offset? dragFrom;
-
-  /// 拖拽中临时连线终点（画布坐标）。
-  final Offset? dragTo;
-
-  /// 拖拽线颜色（默认取 [color]）。
-  final Color? dragColor;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -69,17 +59,6 @@ class ConnectionPainter extends CustomPainter {
       canvas.drawPath(path, paint);
       // 在目标端口处画一个小箭头，强化方向感。
       _drawArrow(canvas, to, from, isSelected ? selectedColor : color);
-    }
-
-    if (dragFrom != null && dragTo != null) {
-      final path = _bezierPath(dragFrom!, dragTo!);
-      canvas.drawPath(
-        path,
-        _strokePaint(
-          dragColor ?? color,
-          NodeLayout.connectionStrokeWidth,
-        ),
-      );
     }
   }
 
@@ -138,10 +117,7 @@ class ConnectionPainter extends CustomPainter {
         oldDelegate.portPositions != portPositions ||
         oldDelegate.color != color ||
         oldDelegate.selectedEdgeKey != selectedEdgeKey ||
-        oldDelegate.selectedColor != selectedColor ||
-        oldDelegate.dragFrom != dragFrom ||
-        oldDelegate.dragTo != dragTo ||
-        oldDelegate.dragColor != dragColor;
+        oldDelegate.selectedColor != selectedColor;
   }
 }
 

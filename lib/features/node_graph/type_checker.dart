@@ -26,6 +26,7 @@ class TypeCheckResult {
 /// - [VariableSource.projVar]：在 [project.projectVars] 中按 [VariableRef.varId] 查找。
 /// - [VariableSource.component]：运行时注入（item/index/tab/value 等），静态
 ///   无法确定类型，返回 [PortType.any]（兼容一切，由运行时按值校验）。
+/// - [VariableSource.device]：恒为 [PortType.string]（设备只读属性均以字符串返回）。
 ///
 /// 找不到返回 null（引用目标不存在）。
 PortType? resolveRefType(
@@ -76,6 +77,9 @@ PortType? resolveRefType(
     case VariableSource.component:
       // 组件上下文变量类型由运行时值决定，静态返回 any 以兼容校验。
       return PortType.any;
+    case VariableSource.device:
+      // 设备变量恒为 string（deviceType / timezone / time 均返回字符串）。
+      return PortType.string;
   }
 }
 

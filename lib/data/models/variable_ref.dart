@@ -1,7 +1,11 @@
 /// 变量引用来源类型。
 ///
-/// 对应 `#` 作用域四类来源：项目变量、组件上下文变量、函数变量、
-/// 控制流上游节点输出。所有源通过同一 `#` 引用机制访问。
+/// 对应 `#` 作用域五类来源：项目变量、组件上下文变量、函数变量、
+/// 设备变量、控制流上游节点输出。所有源通过同一 `#` 引用机制访问。
+///
+/// **UI 编辑器 vs 函数编辑器**：
+/// - UI 编辑器中 `#` 可引用：[device]、[component]、[projVar]。
+/// - 函数编辑器中 `#` 可引用：[device]、[projVar]、[funcVar]、[upstream]。
 enum VariableSource {
   /// 项目级变量（需配合 [VariableRef.varId]）。
   projVar,
@@ -23,8 +27,21 @@ enum VariableSource {
   /// 尚未执行 / 执行中 / 已完成 / 失败，由 [RuntimeScope] 按状态机返回。
   funcVar,
 
+  /// 设备只读属性变量（需配合 [VariableRef.property]）。
+  ///
+  /// 设备变量不是节点，而是通过 `#device:<property>` 直接引用的只读变量。
+  /// 支持的属性：
+  /// - `deviceType`：设备类型（'web' / 'android' / 'ios' / 'windows' /
+  ///   'macos' / 'linux' / 'fuchsia'）
+  /// - `timezone`：时区名（[DateTime.timeZoneName] 为空时回退为 UTC±HH:MM 偏移）
+  /// - `time`：当前时间 ISO8601 字符串
+  ///
+  /// 在 UI 编辑器和函数编辑器中均可通过 `#` 引用。
+  device,
+
   /// 控制流上游节点的命名数据输出
   /// （需配合 [VariableRef.nodeId] + [VariableRef.outputName]）。
+  /// 仅函数编辑器中可用（UI 编辑器无控制流概念）。
   upstream;
 
   /// 序列化为字符串。
@@ -43,11 +60,42 @@ enum VariableSource {
   }
 }
 
+/// 设备变量支持的属性名常量。
+class DeviceProperty {
+  DeviceProperty._();
+
+  /// 设备类型：'web' / 'android' / 'ios' / 'windows' / 'macos' / 'linux' / 'fuchsia'。
+  static const deviceType = 'deviceType';
+
+  /// 时区名（[DateTime.timeZoneName] 为空时回退为 UTC±HH:MM 偏移）。
+  static const timezone = 'timezone';
+
+  /// 当前时间 ISO8601 字符串。
+  static const time = 'time';
+
+  /// 全部支持的属性列表（用于变量选择卡片展示与校验）。
+  static const all = [deviceType, timezone, time];
+
+  /// 属性展示名（中文）。
+  static String labelOf(String property) {
+    switch (property) {
+      case deviceType:
+        return '设备类型';
+      case timezone:
+        return '时区';
+      case time:
+        return '当前时间';
+      default:
+        return property;
+    }
+  }
+}
+
 /// `#` 引用，数据平面的核心引用单元。
 ///
-/// **双平面模型**：画布连线只表达控制流；数据通过节点编辑页内的
-/// `#` 引用 [VariableRef] 拼装。`#` 作用域四源统一：
-/// 项目变量 / 组件上下文变量 / 函数变量 / 上游节点输出。
+/// **双平面模型**：画布连线只表达控制流（执行顺序）；数据通过节点编辑页内的
+/// `#` 引用 [VariableRef] 拼装。`#` 作用域五源统一：
+/// 设备变量 / 项目变量 / 组件上下文变量 / 函数变量 / 上游节点输出。
 ///
 /// 字段约束：
 /// - [source] == [VariableSource.projVar]：[varId] 必填。
@@ -58,6 +106,8 @@ enum VariableSource {
 ///   - 页面级函数 outputs（含时间线）：[funcId] 必填（指向 [FunctionDef.id]）
 ///     + [outputName] 必填（函数 outputs 名）；运行时按 [PageFuncEntry] 状态机
 ///     解析，未就绪时按 [LoadingStrategy] 返回占位。
+/// - [source] == [VariableSource.device]：[property] 必填，取值为
+///   [DeviceProperty.deviceType] / [DeviceProperty.timezone] / [DeviceProperty.time]。
 /// - [source] == [VariableSource.upstream]：[nodeId] 与 [outputName] 必填。
 class VariableRef {
   /// 引用来源。
@@ -86,6 +136,12 @@ class VariableRef {
   /// 为空时引用组件上下文根（即整个 `ComponentContext.fields` map）。
   final String? fieldName;
 
+  /// 设备属性名（[VariableSource.device] 必填）。
+  ///
+  /// 取值：[DeviceProperty.deviceType] / [DeviceProperty.timezone] /
+  /// [DeviceProperty.time]。
+  final String? property;
+
   const VariableRef({
     required this.source,
     this.nodeId,
@@ -94,6 +150,7 @@ class VariableRef {
     this.funcId,
     this.componentId,
     this.fieldName,
+    this.property,
   });
 
   /// 便捷构造：引用上游节点输出。
@@ -106,7 +163,8 @@ class VariableRef {
         varId = null,
         funcId = null,
         componentId = null,
-        fieldName = null;
+        fieldName = null,
+        property = null;
 
   /// 便捷构造：引用当前函数的局部变量。
   const VariableRef.funcVar({required String varId})
@@ -116,7 +174,8 @@ class VariableRef {
         outputName = null,
         funcId = null,
         componentId = null,
-        fieldName = null;
+        fieldName = null,
+        property = null;
 
   /// 便捷构造：引用页面级函数的某个命名 output（含时间线）。
   ///
@@ -132,7 +191,8 @@ class VariableRef {
         varId = null,
         nodeId = null,
         componentId = null,
-        fieldName = null;
+        fieldName = null,
+        property = null;
 
   /// 便捷构造：引用项目变量。
   const VariableRef.projVar({required String varId})
@@ -142,7 +202,8 @@ class VariableRef {
         outputName = null,
         funcId = null,
         componentId = null,
-        fieldName = null;
+        fieldName = null,
+        property = null;
 
   /// 便捷构造：引用组件上下文变量。
   ///
@@ -157,7 +218,22 @@ class VariableRef {
         nodeId = null,
         outputName = null,
         varId = null,
-        funcId = null;
+        funcId = null,
+        property = null;
+
+  /// 便捷构造：引用设备变量。
+  ///
+  /// [property] 取值为 [DeviceProperty.deviceType] / [DeviceProperty.timezone] /
+  /// [DeviceProperty.time]。
+  const VariableRef.device({required String property})
+      : source = VariableSource.device,
+        property = property,
+        nodeId = null,
+        outputName = null,
+        varId = null,
+        funcId = null,
+        componentId = null,
+        fieldName = null;
 
   /// 是否为页面级函数 outputs 引用（含时间线）。
   ///
@@ -173,6 +249,7 @@ class VariableRef {
     String? funcId,
     String? componentId,
     String? fieldName,
+    String? property,
   }) =>
       VariableRef(
         source: source ?? this.source,
@@ -182,6 +259,7 @@ class VariableRef {
         funcId: funcId ?? this.funcId,
         componentId: componentId ?? this.componentId,
         fieldName: fieldName ?? this.fieldName,
+        property: property ?? this.property,
       );
 
   @override
@@ -194,11 +272,20 @@ class VariableRef {
           varId == other.varId &&
           funcId == other.funcId &&
           componentId == other.componentId &&
-          fieldName == other.fieldName;
+          fieldName == other.fieldName &&
+          property == other.property;
 
   @override
-  int get hashCode =>
-      Object.hash(source, nodeId, outputName, varId, funcId, componentId, fieldName);
+  int get hashCode => Object.hash(
+        source,
+        nodeId,
+        outputName,
+        varId,
+        funcId,
+        componentId,
+        fieldName,
+        property,
+      );
 
   Map<String, dynamic> toJson() => {
         'source': source.toJson(),
@@ -208,6 +295,7 @@ class VariableRef {
         if (funcId != null) 'funcId': funcId,
         if (componentId != null) 'componentId': componentId,
         if (fieldName != null) 'fieldName': fieldName,
+        if (property != null) 'property': property,
       };
 
   factory VariableRef.fromJson(Map<String, dynamic> json) => VariableRef(
@@ -218,6 +306,7 @@ class VariableRef {
         funcId: json['funcId'] as String?,
         componentId: json['componentId'] as String?,
         fieldName: json['fieldName'] as String?,
+        property: json['property'] as String?,
       );
 
   @override
@@ -232,6 +321,8 @@ class VariableRef {
         return 'VariableRef(#proj:$varId)';
       case VariableSource.component:
         return 'VariableRef(#comp:$componentId.$fieldName)';
+      case VariableSource.device:
+        return 'VariableRef(#device:$property)';
     }
   }
 }

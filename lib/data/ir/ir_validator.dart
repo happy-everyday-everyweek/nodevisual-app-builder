@@ -314,6 +314,24 @@ class IrValidator {
           ),);
         }
         break;
+      case VariableSource.device:
+        // 设备变量：只读属性，校验 property 非空且属于支持的属性列表。
+        if (ref.property == null) {
+          issues.add(Issue(
+            severity: IssueSeverity.error,
+            path: path,
+            message: '参数 $paramName 的 device 引用缺少 property',
+          ),);
+        } else if (!DeviceProperty.all.contains(ref.property)) {
+          issues.add(Issue(
+            severity: IssueSeverity.warning,
+            path: path,
+            message: '参数 $paramName 的 device 引用属性 '
+                '"${ref.property}" 不在支持列表中（'
+                '${DeviceProperty.all.join(", ")}），运行时回退为设备类型',
+          ),);
+        }
+        break;
     }
 
     // ---- 类型匹配（warning 级，用 type_checker）----
