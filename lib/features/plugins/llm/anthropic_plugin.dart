@@ -6,6 +6,10 @@ import 'package:http/http.dart' as http;
 import '../../../data/models/port.dart';
 import '../plugin_spec.dart';
 
+// SDK 说明：Anthropic 暂无官方 Dart SDK（截至 2025 年），本插件使用
+// 手写 HTTP 调用 Anthropic Messages API。若未来 Anthropic 发布官方
+// Dart SDK，应迁移为 SDK 调用（与 OpenAI 节点使用 dart_openai 一致）。
+
 /// Anthropic Messages 插件规格。
 ///
 /// id: `llm_anthropic`；输入 messages(list) / model(text) / maxTokens(number)；
