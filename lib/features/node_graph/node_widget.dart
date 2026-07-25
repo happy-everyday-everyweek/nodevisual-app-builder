@@ -338,6 +338,8 @@ class _NodeCardState extends State<NodeCard>
       case 'variable_set':
       case 'variable_get':
         return Icons.label_outline;
+      case 'device_var':
+        return Icons.devices_outlined;
       case 'arithmetic':
         return Icons.calculate_outlined;
       case 'logic':

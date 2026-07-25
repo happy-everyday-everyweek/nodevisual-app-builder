@@ -81,6 +81,9 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
 
   @override
   void dispose() {
+    // 退出编辑器时自增函数版本号（每次编辑会话 +1）。
+    // ref 在 super.dispose() 前仍可用。
+    ref.read(graphMutatorProvider.notifier).bumpVersion();
     _transformController.dispose();
     super.dispose();
   }
@@ -491,7 +494,11 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
           onPressed: () =>
               context.go('/project/${widget.projectId}'),
         ),
-        title: Text(fn.name, maxLines: 1, overflow: TextOverflow.ellipsis),
+        title: Text(
+          '${fn.name} · v${fn.version}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
         actions: [
           IconButton(
             icon: const Icon(Icons.bolt_outlined),

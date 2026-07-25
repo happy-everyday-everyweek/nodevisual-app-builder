@@ -92,6 +92,16 @@ class GraphMutator extends Notifier<FunctionDef?> {
     _commit(fn.copyWith(entry: null));
   }
 
+  /// 自增当前函数的版本号（每次退出编辑器自动保存时调用）。
+  ///
+  /// 用户每完成一次编辑会话（退出函数编辑器），版本号 +1，用于追踪
+  /// 函数的编辑次数。版本号从 1 开始，新建函数不经此方法时保持 1。
+  void bumpVersion() {
+    final fn = _currentFunction;
+    if (fn == null) return;
+    _commit(fn.copyWith(version: fn.version + 1));
+  }
+
   // ---- 节点 ----
 
   /// 添加节点；返回新节点 id。

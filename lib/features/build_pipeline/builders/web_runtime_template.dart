@@ -312,6 +312,28 @@ class WebRuntimeTemplate {
       case "literal": {
         return { outputs: { value: params.value } };
       }
+      case "device_var": {
+        // 设备只读属性：deviceType / timezone / time。
+        const prop = params.property || "deviceType";
+        let v;
+        if (prop === "time") {
+          v = new Date().toISOString();
+        } else if (prop === "timezone") {
+          try {
+            v = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+          } catch (e) {
+            const off = -new Date().getTimezoneOffset();
+            const sign = off >= 0 ? "+" : "-";
+            const hh = String(Math.abs(off) / 60 | 0).padStart(2, "0");
+            const mm = String(Math.abs(off) % 60).padStart(2, "0");
+            v = "UTC" + sign + hh + ":" + mm;
+          }
+        } else {
+          // Web 运行时设备类型恒为 web。
+          v = "web";
+        }
+        return { outputs: { value: v } };
+      }
       default:
         if (node.kind && node.kind.indexOf("db_") === 0) {
           console.warn("[NodeVisual] DB node not supported in Web runtime: " + node.kind);

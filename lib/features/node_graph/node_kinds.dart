@@ -278,6 +278,24 @@ class NodeKindRegistry {
         defaultControlOutputs: ['next'],
       ),
 
+      // ---- 设备变量（只读：设备类型 / 时区 / 时间）----
+      NodeKindSpec(
+        kind: 'device_var',
+        displayName: '设备变量',
+        category: NodeCategory.variable,
+        paramSchema: const [
+          ParamSpec(
+            name: 'property',
+            label: '属性',
+            inputType: ParamInputType.dropdown,
+            options: ['deviceType', 'timezone', 'time'],
+            defaultValue: 'deviceType',
+          ),
+        ],
+        defaultControlOutputs: ['next'],
+        defaultDataOutputs: [(name: 'value', type: PortType.string)],
+      ),
+
       // ---- 运算 ----
       NodeKindSpec(
         kind: 'arithmetic',

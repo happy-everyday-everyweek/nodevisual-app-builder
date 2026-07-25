@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show defaultTargetPlatform, kIsWeb, TargetPlatform;
+
 import '../../../data/models/control_edge.dart';
 import '../../../data/models/db_schema.dart';
 import '../../../data/models/function_def.dart';
@@ -186,6 +188,8 @@ Future<NodeExecResult> executeNode(ExecContext ctx) async {
     // ---- 变量 ----
     case 'variable_set':
       return _execVariableSet(ctx);
+    case 'device_var':
+      return _execDeviceVar(ctx);
 
     // ---- 运算 ----
     case 'arithmetic':
@@ -295,6 +299,51 @@ Future<NodeExecResult> _execVariableSet(ExecContext ctx) async {
     }
   }
   return const NodeExecResult(nextControlOutput: 'next');
+}
+
+/// device_var：读取设备只读属性。
+///
+/// [property] ∈ {deviceType, timezone, time}：
+/// - deviceType：'web' / 'android' / 'ios' / 'windows' / 'macos' / 'linux' / 'fuchsia'
+/// - timezone：时区名（[DateTime.timeZoneName] 为空时回退为 UTC±HH:MM 偏移）
+/// - time：当前时间 ISO8601 字符串
+Future<NodeExecResult> _execDeviceVar(ExecContext ctx) async {
+  final property = ctx.node.params['property']?.toString() ?? 'deviceType';
+  String value;
+  switch (property) {
+    case 'timezone':
+      final name = DateTime.now().timeZoneName;
+      if (name != null && name.isNotEmpty) {
+        value = name;
+      } else {
+        // 回退：基于 offset 的 UTC±HH:MM。
+        final offset = DateTime.now().timeZoneOffset;
+        final sign = offset.isNegative ? '-' : '+';
+        final hh = offset.inHours.abs().toString().padLeft(2, '0');
+        final mm = (offset.inMinutes.abs() % 60).toString().padLeft(2, '0');
+        value = 'UTC$sign$hh:$mm';
+      }
+    case 'time':
+      value = DateTime.now().toIso8601String();
+    case 'deviceType':
+    default:
+      if (kIsWeb) {
+        value = 'web';
+      } else {
+        value = switch (defaultTargetPlatform) {
+          TargetPlatform.android => 'android',
+          TargetPlatform.iOS => 'ios',
+          TargetPlatform.windows => 'windows',
+          TargetPlatform.macOS => 'macos',
+          TargetPlatform.linux => 'linux',
+          TargetPlatform.fuchsia => 'fuchsia',
+        };
+      }
+  }
+  return NodeExecResult(
+    nextControlOutput: 'next',
+    dataOutputs: {'value': value},
+  );
 }
 
 // ===========================================================================
