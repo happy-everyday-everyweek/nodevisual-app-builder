@@ -161,6 +161,7 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
                     .selectComponent(null),
                 child: _buildCanvas(theme, project, selectedId),
               ),
+              // 组件添加 FAB（右下）
               Positioned(
                 right: 16,
                 bottom: 16,
@@ -170,6 +171,18 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
                   child: const Icon(Icons.add),
                 ),
               ),
+              // 页面管理 FAB（左下）：竖屏下也能管理页面
+              Positioned(
+                left: 16,
+                bottom: 16,
+                child: FloatingActionButton.small(
+                  heroTag: 'ui_page_fab',
+                  tooltip: '页面管理',
+                  onPressed: () => _showPageSheet(project),
+                  child: const Icon(Icons.article_outlined),
+                ),
+              ),
+              // 定时器 FAB
               Positioned(
                 right: 16,
                 bottom: 80,
@@ -193,6 +206,22 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
             ),
           ),
       ],
+    );
+  }
+
+  /// 竖屏下页面管理 BottomSheet。
+  void _showPageSheet(Project project) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.6,
+        minChildSize: 0.3,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (ctx, controller) => PagePanel(project: project),
+      ),
     );
   }
 

@@ -56,6 +56,13 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
   // 当前选中的连线键（"fromNode:fromPort:toNode"），用于高亮 + 删除。
   String? _selectedEdgeKey;
 
+  /// 当前编辑器交互模式（指针 / 连线 / 添加）。
+  NodeEditorMode _mode = NodeEditorMode.pointer;
+
+  /// 连线模式下当前拖拽悬停的目标节点 id（高亮 + 命中判定）。
+  String? _connectHoverTarget;
+
+  /// 添加模式下是否展开节点面板。
   bool _paletteExpanded = false;
 
   /// 调色板中已折叠的节点分类（默认全展开，点击分组标题可折叠）。
@@ -153,6 +160,53 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
       y: node.position.y + dy,
     );
     ref.read(graphMutatorProvider.notifier).moveNode(nodeId, newPos);
+
+    // 节点拖到屏幕边缘时画布自动跟随（指针模式）。
+    _autoFollowNode(nodeId, newPos, scale);
+  }
+
+  /// 节点拖到视口边缘时，平移画布以保持节点可见。
+  ///
+  /// 通过将节点画布坐标转为视口坐标，判断是否触及边缘阈值，
+  /// 触及时反向平移 `_transformController`，使节点停留在视口内。
+  void _autoFollowNode(String nodeId, NodePosition nodePos, double scale) {
+    final renderObj = _viewerKey.currentContext?.findRenderObject();
+    if (renderObj is! RenderBox || !renderObj.hasSize) return;
+    final viewportSize = renderObj.size;
+
+    // 节点中心画布坐标。
+    final nodeCanvasCenter = Offset(
+      nodePos.x + NodeLayout.width / 2,
+      nodePos.y + NodeLayout.headerHeight / 2,
+    );
+    // 应用当前变换矩阵 → 视口坐标。
+    final viewportPos =
+        _transformController.value * nodeCanvasCenter;
+
+    const edgeThreshold = 48.0; // 距视口边缘多少像素开始跟随
+    const followSpeed = 0.8; // 跟随速度（避免抖动）
+
+    var shiftX = 0.0;
+    var shiftY = 0.0;
+    if (viewportPos.dx < edgeThreshold) {
+      shiftX = (viewportPos.dx - edgeThreshold) * followSpeed;
+    } else if (viewportPos.dx > viewportSize.width - edgeThreshold) {
+      shiftX =
+          (viewportPos.dx - (viewportSize.width - edgeThreshold)) * followSpeed;
+    }
+    if (viewportPos.dy < edgeThreshold) {
+      shiftY = (viewportPos.dy - edgeThreshold) * followSpeed;
+    } else if (viewportPos.dy > viewportSize.height - edgeThreshold) {
+      shiftY = (viewportPos.dy - (viewportSize.height - edgeThreshold)) *
+          followSpeed;
+    }
+    if (shiftX == 0 && shiftY == 0) return;
+
+    // 平移画布：直接修改变换矩阵的平移分量（视口坐标增量）。
+    final matrix = Matrix4.copy(_transformController.value);
+    matrix[12] -= shiftX;
+    matrix[13] -= shiftY;
+    _transformController.value = matrix;
   }
 
   void _onNodeDelete(String nodeId) {
@@ -168,28 +222,28 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
 
   // ---- 连线交互 ----
 
-  void _onConnectionDragStart(String portName) {
-    final selectedId = ref.read(selectedNodeIdProvider);
-    if (selectedId == null) return;
+  /// 连线模式拖拽起点：以源节点的第一个控制流输出端口作为 fromPort。
+  void _onConnectionDragStart(String nodeId) {
     final fn = ref.read(graphMutatorProvider);
     if (fn == null) return;
     Node? nodeFound;
     for (final n in fn.nodes) {
-      if (n.id == selectedId) {
+      if (n.id == nodeId) {
         nodeFound = n;
         break;
       }
     }
     final node = nodeFound;
-    if (node == null) return;
-    final portIndex = node.controlOutputs.indexWhere((p) => p.name == portName);
+    if (node == null || node.controlOutputs.isEmpty) return;
+    final fromPort = node.controlOutputs.first.name;
+    final portIndex = node.controlOutputs.indexWhere((p) => p.name == fromPort);
     if (portIndex < 0) return;
     final off = NodeLayout.outputPortOffset(portIndex);
     final origin = node.position;
     final fromPos = Offset(origin.x + off.dx, origin.y + off.dy);
     setState(() {
-      _dragFromNode = selectedId;
-      _dragFromPort = portName;
+      _dragFromNode = nodeId;
+      _dragFromPort = fromPort;
       _dragFromCanvasPos = fromPos;
       _dragCurrentCanvasPos = fromPos;
     });
@@ -198,13 +252,38 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
   void _onConnectionDragUpdate(Offset globalPosition) {
     final canvasPos = _globalToCanvas(globalPosition);
     if (canvasPos == null) return;
-    setState(() => _dragCurrentCanvasPos = canvasPos);
+    // 实时计算悬停目标节点（用于高亮）。
+    final fn = ref.read(graphMutatorProvider);
+    String? hoverTarget;
+    if (fn != null && _dragFromNode != null) {
+      double bestDist = double.infinity;
+      for (final node in fn.nodes) {
+        if (node.id == _dragFromNode) continue;
+        // 以节点中心为命中点。
+        final center = Offset(
+          node.position.x + NodeLayout.width / 2,
+          node.position.y + NodeLayout.headerHeight / 2,
+        );
+        final d = (center - canvasPos).distance;
+        // 命中阈值：节点对角线一半 + 余量。
+        final halfDiag = (NodeLayout.width / 2) * 1.2;
+        if (d < halfDiag && d < bestDist) {
+          bestDist = d;
+          hoverTarget = node.id;
+        }
+      }
+    }
+    setState(() {
+      _dragCurrentCanvasPos = canvasPos;
+      _connectHoverTarget = hoverTarget;
+    });
   }
 
   void _onConnectionDragEnd(Offset? globalPosition) {
     final dragFromNode = _dragFromNode;
     final dragFromPort = _dragFromPort;
     final dragFromPos = _dragFromCanvasPos;
+    final hoverTarget = _connectHoverTarget;
     final endCanvasPos =
         globalPosition == null ? _dragCurrentCanvasPos : _globalToCanvas(globalPosition);
 
@@ -214,6 +293,7 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
       _dragFromPort = null;
       _dragFromCanvasPos = null;
       _dragCurrentCanvasPos = null;
+      _connectHoverTarget = null;
     });
 
     if (dragFromNode == null ||
@@ -223,27 +303,28 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
       return;
     }
 
-    // 在所有节点入口端口中找最近的命中。
-    final fn = ref.read(graphMutatorProvider);
-    if (fn == null) return;
-    String? bestTarget;
-    double bestDist = double.infinity;
-    for (final node in fn.nodes) {
-      if (node.id == dragFromNode) continue; // 不能连自己
-      final inOff = NodeLayout.inputPortOffset();
-      final pos =
-          Offset(node.position.x + inOff.dx, node.position.y + inOff.dy);
-      final d = (pos - endCanvasPos).distance;
-      if (d < bestDist) {
-        bestDist = d;
-        bestTarget = node.id;
+    // 优先使用拖拽过程中识别的悬停目标节点；否则回退到最近命中。
+    String? bestTarget = hoverTarget;
+    if (bestTarget == null) {
+      final fn = ref.read(graphMutatorProvider);
+      if (fn == null) return;
+      double bestDist = double.infinity;
+      for (final node in fn.nodes) {
+        if (node.id == dragFromNode) continue;
+        final center = Offset(
+          node.position.x + NodeLayout.width / 2,
+          node.position.y + NodeLayout.headerHeight / 2,
+        );
+        final d = (center - endCanvasPos).distance;
+        final halfDiag = (NodeLayout.width / 2) * 1.2;
+        if (d < halfDiag && d < bestDist) {
+          bestDist = d;
+          bestTarget = node.id;
+        }
       }
     }
 
-    if (bestTarget == null ||
-        bestDist > NodeLayout.portHitThreshold) {
-      return; // 未命中任何端口
-    }
+    if (bestTarget == null) return;
 
     final result = ref.read(graphMutatorProvider.notifier).addEdge(
           fromNode: dragFromNode,
@@ -280,6 +361,7 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
       _dragFromPort = null;
       _dragFromCanvasPos = null;
       _dragCurrentCanvasPos = null;
+      _connectHoverTarget = null;
     });
   }
 
@@ -371,6 +453,8 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
         .addNode(kind, position: position);
     if (id.isNotEmpty) {
       ref.read(selectedNodeIdProvider.notifier).state = id;
+      // 添加后切回指针模式，便于立即编辑新节点。
+      _switchMode(NodeEditorMode.pointer);
     }
   }
 
@@ -445,11 +529,20 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
                     theme,
                   ),
                 ),
+                // 添加模式下展开节点面板（位于胶囊工具栏上方）。
+                if (_mode == NodeEditorMode.add && _paletteExpanded)
+                  Positioned(
+                    left: 0,
+                    right: 0,
+                    bottom: 76,
+                    child: _buildPalette(theme),
+                  ),
+                // 底部胶囊工具栏：指针 / 连线 / 添加。
                 Positioned(
                   left: 0,
                   right: 0,
                   bottom: 0,
-                  child: _buildPalette(theme),
+                  child: _buildCapsuleToolbar(theme),
                 ),
                 if (_dragFromCanvasPos != null &&
                     _dragCurrentCanvasPos != null)
@@ -523,6 +616,7 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
                 child: NodeCard(
                   node: node,
                   selected: node.id == selectedNodeId,
+                  mode: _mode,
                   onSelect: () => _onNodeLongPress(node.id),
                   onOpenEditor: () => _openNodeEditor(node.id),
                   onDelete: () => _onNodeDelete(node.id),
@@ -532,6 +626,7 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
                   onConnectionDragUpdate: _onConnectionDragUpdate,
                   onConnectionDragEnd: _onConnectionDragEnd,
                   onConnectionDragCancel: _onConnectionDragCancel,
+                  isConnectionTarget: node.id == _connectHoverTarget,
                 ),
               ),
           ],
@@ -540,50 +635,100 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
     );
   }
 
+  /// 节点面板（添加模式下展开）。仅展示分组网格，无独立展开/折叠头部。
   Widget _buildPalette(ThemeData theme) {
     return Material(
       elevation: 6,
+      borderRadius: BorderRadius.circular(16),
       color: theme.colorScheme.surfaceContainerHigh.withValues(alpha: 0.97),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          InkWell(
-            onTap: () => setState(() => _paletteExpanded = !_paletteExpanded),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Row(
-                children: [
-                  Icon(Icons.add_circle_outline,
-                      size: 18, color: theme.colorScheme.primary,),
-                  const SizedBox(width: 8),
-                  Text('添加节点',
-                      style: theme.textTheme.labelLarge
-                          ?.copyWith(fontWeight: FontWeight.w600,),),
-                  const Spacer(),
-                  Icon(
-                    _paletteExpanded
-                        ? Icons.keyboard_arrow_down
-                        : Icons.keyboard_arrow_up,
-                    size: 18,
-                  ),
-                ],
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+        child: _buildPaletteGrid(theme),
+      ),
+    );
+  }
+
+  /// 底部胶囊工具栏：指针 / 连线 / 添加。
+  ///
+  /// 三段式胶囊，居中悬浮于画布底部，与 [CapsuleTopBar] 视觉一致：
+  /// 圆角胶囊 + 半透明 + 描边；当前模式填充主色高亮。
+  Widget _buildCapsuleToolbar(ThemeData theme) {
+    final cs = theme.colorScheme;
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 12, top: 4),
+        child: Center(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(28),
+              border: Border.all(color: cs.outlineVariant, width: 0.75),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.08),
+                  blurRadius: 12,
+                  offset: const Offset(0, 2),
+                ),
+              ],
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(28),
+              child: Container(
+                height: 56,
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: cs.surface.withValues(alpha: 0.95),
+                  borderRadius: BorderRadius.circular(28),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _ModeButton(
+                      icon: Icons.pan_tool_outlined,
+                      label: '指针',
+                      selected: _mode == NodeEditorMode.pointer,
+                      onPressed: () => _switchMode(NodeEditorMode.pointer),
+                    ),
+                    _ModeButton(
+                      icon: Icons.timeline,
+                      label: '连线',
+                      selected: _mode == NodeEditorMode.connect,
+                      onPressed: () => _switchMode(NodeEditorMode.connect),
+                    ),
+                    _ModeButton(
+                      icon: Icons.add_circle_outline,
+                      label: '添加',
+                      selected: _mode == NodeEditorMode.add,
+                      onPressed: () => _switchMode(NodeEditorMode.add),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
-          AnimatedCrossFade(
-            duration: const Duration(milliseconds: 180),
-            crossFadeState: _paletteExpanded
-                ? CrossFadeState.showSecond
-                : CrossFadeState.showFirst,
-            firstChild: const SizedBox(height: 0, width: double.infinity),
-            secondChild: Padding(
-              padding: const EdgeInsets.only(left: 8, right: 8, bottom: 8),
-              child: _buildPaletteGrid(theme),
-            ),
-          ),
-        ],
+        ),
       ),
     );
+  }
+
+  /// 切换编辑器模式。
+  ///
+  /// 切换到"添加"时默认展开节点面板；切换到其它模式时折叠面板并清除连线拖拽态。
+  void _switchMode(NodeEditorMode newMode) {
+    setState(() {
+      _mode = newMode;
+      if (newMode == NodeEditorMode.add) {
+        _paletteExpanded = true;
+      } else {
+        _paletteExpanded = false;
+      }
+      // 切换模式时清理未完成的连线拖拽。
+      _dragFromNode = null;
+      _dragFromPort = null;
+      _dragFromCanvasPos = null;
+      _dragCurrentCanvasPos = null;
+      _connectHoverTarget = null;
+    });
   }
 
   Widget _buildPaletteGrid(ThemeData theme) {
@@ -656,7 +801,7 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
                     size: 14, color: theme.colorScheme.onTertiaryContainer,),
                 const SizedBox(width: 4),
                 Text(
-                  '拖到目标节点的入口端口释放',
+                  '拖到目标节点上释放以建立连线',
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: theme.colorScheme.onTertiaryContainer,
                   ),
@@ -1331,6 +1476,68 @@ class _PaletteButtonState extends State<_PaletteButton> {
                 overflow: TextOverflow.ellipsis,
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 胶囊工具栏中的模式按钮。
+///
+/// 选中态：填充主色 + onPrimary 图标文字；未选中态：透明 + onSurfaceVariant。
+/// 触控区充足（宽 72，高 48），圆角 24，与胶囊外形一致。
+class _ModeButton extends StatelessWidget {
+  const _ModeButton({
+    required this.icon,
+    required this.label,
+    required this.selected,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String label;
+  final bool selected;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOutCubic,
+      decoration: BoxDecoration(
+        color: selected ? cs.primary : Colors.transparent,
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minWidth: 72),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  icon,
+                  size: 20,
+                  color: selected ? cs.onPrimary : cs.onSurfaceVariant,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  label,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: selected ? cs.onPrimary : cs.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),

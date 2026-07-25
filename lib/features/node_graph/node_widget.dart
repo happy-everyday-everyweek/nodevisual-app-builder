@@ -4,26 +4,37 @@ import '../../data/models/node.dart';
 import '../../data/models/port.dart';
 import 'node_layout.dart';
 
+/// 编辑器交互模式。
+enum NodeEditorMode {
+  /// 指针：移动节点 / 平移画布，节点拖到屏幕边缘时画布自动跟随。
+  pointer,
+
+  /// 连线：从节点拖到另一节点建立控制流连线。
+  connect,
+
+  /// 添加：打开节点面板。
+  add,
+}
+
 /// 节点卡片渲染（双平面模型的"控制平面 + 数据输出展示"）。
 ///
-/// 视觉布局（与 [NodeLayout] 常量对齐，端口位置由画布层反推）：
+/// 视觉布局（与 [NodeLayout] 常量对齐）：
 /// ```
-/// ●  kind · name                <- 头部 (36px)，左侧入口端口
-///        outName1            ●→ <- 控制流输出端口行 (24px each)
-///        outName2            ●→
+///  kind · name                   <- 头部 (36px)
+///        outName1                  <- 控制流输出行 (24px each)
+///        outName2
 /// ─────────────────────────
-/// result  [number]              <- 数据输出展示行 (20px each, 只读)
+/// result  [number]                <- 数据输出展示行 (20px each, 只读)
 /// rows    [list]
 /// ```
 ///
-/// 动画：
-/// - 出现：从 0.96 缩放 + 淡入（220ms，easeOutCubic），消失原路反向。
-/// - 选中：边框宽度与阴影强度过渡（200ms），反向恢复。
+/// 无端口圆点：连线交互由 [NodeEditorMode.connect] 模式下整卡拖拽完成。
 class NodeCard extends StatefulWidget {
   const NodeCard({
     super.key,
     required this.node,
     required this.selected,
+    required this.mode,
     this.onSelect,
     this.onOpenEditor,
     this.onDelete,
@@ -32,6 +43,7 @@ class NodeCard extends StatefulWidget {
     this.onConnectionDragUpdate,
     this.onConnectionDragEnd,
     this.onConnectionDragCancel,
+    this.isConnectionTarget = false,
   });
 
   /// 节点数据。
@@ -40,29 +52,35 @@ class NodeCard extends StatefulWidget {
   /// 是否选中。
   final bool selected;
 
+  /// 当前编辑器模式。
+  final NodeEditorMode mode;
+
   /// 长按选中回调。
   final VoidCallback? onSelect;
 
   /// 单击打开节点编辑页回调（数据平面入口）。
   final VoidCallback? onOpenEditor;
 
-  /// 删除节点回调（通过节点详情菜单触发）。
+  /// 删除节点回调。
   final VoidCallback? onDelete;
 
-  /// 节点拖拽更新回调（[DragUpdateDetails] 来自内部 GestureDetector）。
+  /// 节点拖拽更新回调（指针模式下移动节点）。
   final ValueChanged<DragUpdateDetails>? onDragUpdate;
 
-  /// 从某个控制流输出端口开始拖拽连线（参数：端口名）。
+  /// 连线模式：从该节点开始拖拽连线（参数：节点 id）。
   final ValueChanged<String>? onConnectionDragStart;
 
-  /// 拖拽连线过程中（参数：当前指针全局坐标）。
+  /// 连线模式：拖拽过程中（参数：当前指针全局坐标）。
   final ValueChanged<Offset>? onConnectionDragUpdate;
 
-  /// 拖拽连线结束（参数：当前指针全局坐标，可空）。
+  /// 连线模式：拖拽结束（参数：当前指针全局坐标，可空）。
   final ValueChanged<Offset?>? onConnectionDragEnd;
 
-  /// 拖拽连线取消。
+  /// 连线模式：拖拽取消。
   final VoidCallback? onConnectionDragCancel;
+
+  /// 连线模式下是否为当前拖拽的目标节点（高亮）。
+  final bool isConnectionTarget;
 
   @override
   State<NodeCard> createState() => _NodeCardState();
@@ -86,7 +104,6 @@ class _NodeCardState extends State<NodeCard>
       curve: Curves.easeOutCubic,
       reverseCurve: Curves.easeInCubic,
     );
-    // 进入时正放；widget 销毁时（dispose）由框架自动移除，无需显式 reverse。
     _appear.forward();
   }
 
@@ -106,6 +123,9 @@ class _NodeCardState extends State<NodeCard>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
+    final isConnect = widget.mode == NodeEditorMode.connect;
+    final isTarget = widget.isConnectionTarget;
+
     return ScaleTransition(
       scale: Tween<double>(begin: 0.96, end: 1.0).animate(_appearAnim),
       alignment: Alignment.center,
@@ -121,85 +141,70 @@ class _NodeCardState extends State<NodeCard>
               color: cs.surface,
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                color: widget.selected ? cs.primary : cs.outlineVariant,
-                width: widget.selected ? 1.5 : 1,
+                color: isTarget
+                    ? cs.tertiary
+                    : (widget.selected ? cs.primary : cs.outlineVariant),
+                width: isTarget || widget.selected ? 1.5 : 1,
               ),
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black
-                      .withValues(alpha: widget.selected ? 0.10 : 0.04),
+                  color: Colors.black.withValues(
+                      alpha: widget.selected ? 0.10 : 0.04,),
                   blurRadius: widget.selected ? 12 : 6,
                   offset: const Offset(0, 2),
                 ),
               ],
             ),
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                // 卡片主体：单击打开节点编辑页（同时选中）+ 长按选中 + 单指拖拽移动。
-                // 端口在 Stack 上层，自身手势让位。
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () {
-                    widget.onSelect?.call();
-                    widget.onOpenEditor?.call();
-                  },
-                  onLongPress: widget.onSelect,
-                  onPanUpdate: widget.onDragUpdate,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      _buildHeader(theme, cs),
-                      for (var i = 0; i < widget.node.controlOutputs.length; i++)
-                        _buildOutputRow(
-                          theme,
-                          cs,
-                          widget.node.controlOutputs[i].name,
-                        ),
-                      if (widget.node.dataOutputs.isNotEmpty)
-                        _buildDataSection(theme, cs),
-                    ],
-                  ),
-                ),
-                // 入口端口（左侧，头部中线）。
-                Positioned(
-                  left: -NodeLayout.portRadius,
-                  top: NodeLayout.headerHeight / 2 - NodeLayout.portRadius,
-                  child: _PortHit(
-                    color: cs.primary,
-                    onTap: widget.onSelect,
-                    tooltip: '入口端口',
-                  ),
-                ),
-                // 各控制流输出端口（右侧，对应行中线）。
-                for (var i = 0; i < widget.node.controlOutputs.length; i++)
-                  Positioned(
-                    left: NodeLayout.width - NodeLayout.portRadius,
-                    top: NodeLayout.headerHeight +
-                        i * NodeLayout.outputRowHeight +
-                        NodeLayout.outputRowHeight / 2 -
-                        NodeLayout.portRadius,
-                    child: _PortHit(
-                      color: cs.onSurface,
-                      onPanStart: widget.onConnectionDragStart != null
-                          ? () => widget.onConnectionDragStart!(
-                              widget.node.controlOutputs[i].name)
-                          : null,
-                      onPanUpdate: widget.onConnectionDragUpdate == null
-                          ? null
-                          : (details) => widget.onConnectionDragUpdate!(
-                              details.globalPosition),
-                      onPanEnd: widget.onConnectionDragEnd,
-                      onPanCancel: widget.onConnectionDragCancel,
-                      tooltip: '输出: ${widget.node.controlOutputs[i].name}',
-                    ),
-                  ),
-              ],
-            ),
+            child: _buildBody(theme, cs, isConnect),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildBody(ThemeData theme, ColorScheme cs, bool isConnect) {
+    // 连线模式：整卡作为拖拽源，使用 Pan 手势。
+    if (isConnect) {
+      return GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onPanStart: widget.onConnectionDragStart == null
+            ? null
+            : (_) => widget.onConnectionDragStart!(widget.node.id),
+        onPanUpdate: widget.onConnectionDragUpdate == null
+            ? null
+            : (d) => widget.onConnectionDragUpdate!(d.globalPosition),
+        onPanEnd: widget.onConnectionDragEnd == null
+            ? null
+            : (d) => widget.onConnectionDragEnd!(d.globalPosition),
+        onPanCancel: widget.onConnectionDragCancel,
+        child: _buildColumn(theme, cs),
+      );
+    }
+
+    // 指针模式：单击打开编辑器 + 长按选中 + 拖拽移动。
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        widget.onSelect?.call();
+        widget.onOpenEditor?.call();
+      },
+      onLongPress: widget.onSelect,
+      onPanUpdate: widget.onDragUpdate,
+      child: _buildColumn(theme, cs),
+    );
+  }
+
+  Widget _buildColumn(ThemeData theme, ColorScheme cs) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _buildHeader(theme, cs),
+        for (var i = 0; i < widget.node.controlOutputs.length; i++)
+          _buildOutputRow(theme, cs, widget.node.controlOutputs[i].name),
+        if (widget.node.dataOutputs.isNotEmpty)
+          _buildDataSection(theme, cs),
+      ],
     );
   }
 
@@ -247,7 +252,6 @@ class _NodeCardState extends State<NodeCard>
           ),
           if (widget.onDelete != null) ...[
             const SizedBox(width: 4),
-            // 触控目标 >= 28dp（节点内紧凑场景），用 IconButton 保证命中区
             SizedBox(
               width: 28,
               height: 28,
@@ -265,11 +269,7 @@ class _NodeCardState extends State<NodeCard>
     );
   }
 
-  Widget _buildOutputRow(
-    ThemeData theme,
-    ColorScheme cs,
-    String name,
-  ) {
+  Widget _buildOutputRow(ThemeData theme, ColorScheme cs, String name) {
     return Container(
       height: NodeLayout.outputRowHeight,
       padding: const EdgeInsets.only(left: 16, right: 16),
@@ -363,69 +363,6 @@ class _NodeCardState extends State<NodeCard>
   }
 }
 
-/// 端口圆点 + 触控放大命中区。
-///
-/// 视觉圆点半径为 [NodeLayout.portRadius]，但命中区半径为
-/// [NodeLayout.portHitRadius]（移动端触控友好）。
-class _PortHit extends StatelessWidget {
-  const _PortHit({
-    required this.color,
-    this.onTap,
-    this.onPanStart,
-    this.onPanUpdate,
-    this.onPanEnd,
-    this.onPanCancel,
-    this.tooltip,
-  });
-
-  final Color color;
-  final VoidCallback? onTap;
-  final VoidCallback? onPanStart;
-  final ValueChanged<DragUpdateDetails>? onPanUpdate;
-  final ValueChanged<Offset?>? onPanEnd;
-  final VoidCallback? onPanCancel;
-  final String? tooltip;
-
-  @override
-  Widget build(BuildContext context) {
-    const hitSize = NodeLayout.portHitRadius * 2;
-    final dot = Container(
-      width: NodeLayout.portRadius * 2,
-      height: NodeLayout.portRadius * 2,
-      decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
-        border: Border.all(color: Theme.of(context).colorScheme.surface, width: 1.5),
-        boxShadow: [
-          BoxShadow(
-            color: color.withValues(alpha: 0.4),
-            blurRadius: 4,
-            spreadRadius: 0.5,
-          ),
-        ],
-      ),
-    );
-    final child = SizedBox(
-      width: hitSize,
-      height: hitSize,
-      child: Center(child: dot),
-    );
-    return GestureDetector(
-      behavior: HitTestBehavior.translucent,
-      onTap: onTap,
-      onPanStart: onPanStart == null ? null : (_) => onPanStart!(),
-      onPanUpdate: onPanUpdate,
-      onPanEnd: onPanEnd == null
-          ? null
-          : (details) => onPanEnd!(details.globalPosition),
-      onPanCancel: onPanCancel,
-      child: tooltip == null
-          ? child
-          : Tooltip(message: tooltip!, child: child),
-    );
-  }
-}
-
 /// 数据输出类型小标签。
 class _TypeChip extends StatelessWidget {
   const _TypeChip({required this.type});
@@ -435,7 +372,7 @@ class _TypeChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final color = _typeColor(type, cs);
+    final color = cs.onSurfaceVariant;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
       decoration: BoxDecoration(
@@ -453,11 +390,5 @@ class _TypeChip extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  Color _typeColor(PortType type, ColorScheme cs) {
-    // 极简黑白灰：所有类型统一用 onSurfaceVariant，避免彩色噪点；
-    // 通过文字标签区分，不靠颜色编码。
-    return cs.onSurfaceVariant;
   }
 }

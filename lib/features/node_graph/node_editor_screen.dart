@@ -435,12 +435,12 @@ class _RefOrTextFieldState extends State<_RefOrTextField> {
     final name = text.substring(1);
     if (name.isEmpty) {
       // 仅有 '#'，稍后弹卡片。
-      _debounce = Timer(const Duration(milliseconds: 300), () {
+      _debounce = Timer(const Duration(milliseconds: 200), () {
         _openSheet();
       });
     } else {
       // '#名称' 快速匹配。
-      _debounce = Timer(const Duration(milliseconds: 450), () {
+      _debounce = Timer(const Duration(milliseconds: 300), () {
         _tryQuickRef(name);
       });
     }
@@ -1118,9 +1118,9 @@ class _KeyValueRowState extends State<_KeyValueRow> {
     _clearOnCancel = true;
     final name = text.substring(1);
     if (name.isEmpty) {
-      _debounce = Timer(const Duration(milliseconds: 300), _openSheet);
+      _debounce = Timer(const Duration(milliseconds: 200), _openSheet);
     } else {
-      _debounce = Timer(const Duration(milliseconds: 450), () => _tryQuickRef(name));
+      _debounce = Timer(const Duration(milliseconds: 300), () => _tryQuickRef(name));
     }
   }
 

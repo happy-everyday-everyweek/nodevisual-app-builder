@@ -138,12 +138,55 @@ class _EditorShellScreenState extends ConsumerState<EditorShellScreen> {
             right: 0,
             child: CapsuleTopBar(),
           ),
+          // 编译打包按钮：置于右上角（胶囊栏下方），避免遮挡底部画布按钮。
+          Positioned(
+            top: 76,
+            right: 12,
+            child: _CompileButton(
+              onPressed: () =>
+                  context.push(AppConstants.buildRoute(widget.projectId)),
+            ),
+          ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => context.push(AppConstants.buildRoute(widget.projectId)),
-        icon: const Icon(Icons.build_outlined),
-        label: const Text('编译打包'),
+    );
+  }
+}
+
+/// 编译打包按钮：小尺寸胶囊，置于右上角不遮挡画布内容。
+class _CompileButton extends StatelessWidget {
+  const _CompileButton({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    return Material(
+      elevation: 2,
+      borderRadius: BorderRadius.circular(20),
+      color: cs.primary,
+      child: InkWell(
+        onTap: onPressed,
+        borderRadius: BorderRadius.circular(20),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.build_outlined, size: 16, color: cs.onPrimary),
+              const SizedBox(width: 4),
+              Text(
+                '编译',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: cs.onPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
