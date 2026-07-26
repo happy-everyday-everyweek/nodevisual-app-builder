@@ -2,14 +2,14 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="NodeVisual App Builder"
-        android:name="${applicationName}"
+        android:name=".MainApplication"
         android:icon="@mipmap/ic_launcher"
-        android:allowBackup="false">
+        android:allowBackup="false"
+        android:extractNativeLibs="true">
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
-            android:taskAffinity=""
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
@@ -56,10 +56,6 @@
         <intent>
             <action android:name="android.intent.action.VIEW"/>
             <data android:scheme="https"/>
-        </intent>
-        <!-- url_launcher 需要查询能处理自定义 scheme 的应用。 -->
-        <intent>
-            <action android:name="android.intent.action.VIEW"/>
         </intent>
     </queries>
 </manifest>

@@ -72,7 +72,8 @@ jobs:
         run: flutter analyze --no-fatal-infos || true
 
       - name: Build APK
-        run: flutter build apk --release --no-tree-shake-icons
+        # --no-shrink 禁用 R8 代码压缩 / 混淆，排除因混淆规则缺失导致启动阶段类找不到的闪退。
+        run: flutter build apk --release --no-tree-shake-icons --no-shrink
 
       - name: Resolve artifact name
         id: artifact
