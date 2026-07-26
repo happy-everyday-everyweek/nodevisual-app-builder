@@ -174,10 +174,9 @@ class _VersionCard extends StatelessWidget {
                   color: cs.surfaceContainerHighest,
                   onColor: cs.onSurface,
                 ),
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 8),
-                  child:
-                      Icon(Icons.arrow_forward, size: 18, color: cs.onSurface),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Icon(Icons.arrow_forward, size: 18, color: cs.onSurface),
                 ),
                 _VersionBadge(
                   label: '即将发布',

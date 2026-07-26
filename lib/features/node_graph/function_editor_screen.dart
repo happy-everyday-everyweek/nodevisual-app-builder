@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:vector_math/vector_math_64.dart' show Matrix4, Vector3;
 
 import '../../core/constants.dart';
 import '../../data/models/entry.dart';
@@ -934,7 +935,9 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
     // viewport = matrix * scene → tx = viewportCenter - scale * nodeCenter
     final tx = viewportSize.width / 2 - scale * nodeCanvasCenter.dx;
     final ty = viewportSize.height / 2 - scale * nodeCanvasCenter.dy;
-    final matrix = Matrix4.identity()..setScale(scale, scale);
+    // vector_math 的 Matrix4 没有 setScale 方法；用 Matrix4.diagonal3 构造
+    // 对角缩放矩阵，再写入平移分量。
+    final matrix = Matrix4.diagonal3(Vector3(scale, scale, 1.0));
     matrix[12] = tx;
     matrix[13] = ty;
     _transformController.value = matrix;

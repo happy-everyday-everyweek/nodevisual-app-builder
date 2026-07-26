@@ -1,4 +1,4 @@
-import '../../features/node_graph/dag_validator.dart';
+import '../../features/node_graph/dag_validator.dart' as dag;
 import '../../features/node_graph/node_kinds.dart';
 import '../../features/node_graph/type_checker.dart';
 import '../models/entry.dart';
@@ -93,12 +93,14 @@ class IrValidator {
     final nodeIds = <String>{for (final n in fn.nodes) n.id};
 
     // DAG 无环 + 边引用合法性 + 单入 + 孤立节点（复用 dag_validator）。
-    final dagErrors = DagValidator.validateGraph(fn);
+    final dagErrors = dag.DagValidator.validateGraph(fn);
     for (final e in dagErrors) {
       issues.add(Issue(
-        severity: IssueSeverity.error,
+        severity: e.severity == dag.IssueSeverity.warning
+            ? IssueSeverity.warning
+            : IssueSeverity.error,
         path: path,
-        message: e,
+        message: e.message,
       ),);
     }
 
