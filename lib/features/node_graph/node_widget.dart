@@ -206,21 +206,8 @@ class _NodeCardState extends State<NodeCard>
   }
 
   Widget _buildBody(ThemeData theme, ColorScheme cs, bool isConnect) {
-    // function_input / function_output 是函数固有入口/出口：
-    // - 不能作为连线起点或终点（连线会破坏函数语义）
-    // - 不能长按拖动移动（位置固定）
-    // - 但可以单击打开编辑器配置入参/出参数据
-    final isProtected = widget.node.kind == 'function_input' ||
-        widget.node.kind == 'function_output';
-
     // 连线模式：单击作为起始或终止节点（两步点击式连线）。
-    // 受保护节点不参与连线（点击无反应）。
     if (isConnect) {
-      if (isProtected) {
-        return IgnorePointer(
-          child: _buildColumn(theme, cs),
-        );
-      }
       return GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.onConnectTap == null
@@ -231,17 +218,9 @@ class _NodeCardState extends State<NodeCard>
     }
 
     // 指针模式：单击打开编辑器；长按放大并进入拖拽，松手还原。
-    // 受保护节点：仅单击打开编辑器，不响应长按拖动。
-    if (isProtected) {
-      return GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () {
-          widget.onSelect?.call();
-          widget.onOpenEditor?.call();
-        },
-        child: _buildColumn(theme, cs),
-      );
-    }
+    // 入参/出参节点与其它节点一样，可点击打开编辑器、可长按拖动、
+    // 可参与连线——它们是函数的入口/出口，必须能正常连线才能让
+    // 整个函数图可用。仅删除按钮被隐藏（不可删除）。
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () {
