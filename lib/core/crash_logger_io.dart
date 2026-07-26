@@ -5,8 +5,6 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-import 'crash_logger.dart';
-
 /// IO 平台崩溃日志实现（Android / iOS / Windows / macOS / Linux）。
 ///
 /// 将异常信息追加写入应用内部与外部可访问的日志文件。

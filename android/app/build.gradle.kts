@@ -25,9 +25,9 @@ android {
         targetSdk = flutter.targetSdkVersion
         // versionCode/versionName 直接硬编码，避免 flutter.versionCode 在
         // AGP 8.5.2 Kotlin DSL 中的函数调用兼容性问题。
-        // 与 pubspec.yaml 版本对齐：0.4.11+1
-        versionCode = 11
-        versionName = "0.4.11"
+        // 与 pubspec.yaml 版本对齐：0.4.13+1
+        versionCode = 13
+        versionName = "0.4.13"
         // Flutter Release 模式不生成 x86 的 libflutter.so / libapp.so，
         // 但部分插件会带 x86 的 .so。若 APK 包含 x86 ABI 却缺少核心库，
         // x86 模拟器 / 设备启动时会因找不到 libflutter.so 直接闪退。

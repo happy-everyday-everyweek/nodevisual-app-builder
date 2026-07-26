@@ -9,10 +9,10 @@ class AppConstants {
   static const String appName = 'NodeVisual App Builder';
 
   /// 应用版本号（与 pubspec.yaml 保持一致）。
-  static const String appVersion = '0.4.11';
+  static const String appVersion = '0.4.13';
 
   /// 构建号。
-  static const int buildNumber = 11;
+  static const int buildNumber = 13;
 
   // ---- 路由路径 ----
   static const String routeHome = '/';
