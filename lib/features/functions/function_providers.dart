@@ -139,13 +139,14 @@ class ProjectMutator extends Notifier<Project?> {
       throw StateError('未打开任何项目，无法创建函数');
     }
     final id = _uuid.v4();
-    // 入参节点放在画布左侧，出参节点放在画布右侧，留出中间空间给业务节点。
+    // 入参/出参节点默认放在初始视口可视区域内，避免新建函数后入参节点
+    // 落在屏幕外导致用户找不到。留出中间空间给业务节点。
     final inputNode = createNodeForKind('function_input').copyWith(
-      position: const NodePosition(x: -300, y: 0),
+      position: const NodePosition(x: 40, y: 100),
       params: const {'name': '入参'},
     );
     final outputNode = createNodeForKind('function_output').copyWith(
-      position: const NodePosition(x: 300, y: 0),
+      position: const NodePosition(x: 360, y: 100),
       params: const {'name': '出参'},
     );
     final fn = FunctionDef(
