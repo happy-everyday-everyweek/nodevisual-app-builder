@@ -156,21 +156,22 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
                     .selectComponent(null),
                 child: _buildCanvas(theme, project, selectedId),
               ),
-              // 组件添加 FAB（右下）
+              // 组件添加 FAB（右下）—— 与左下页面管理 FAB 大小一致。
               Positioned(
                 right: 16,
                 bottom: 16,
                 child: FloatingActionButton(
                   heroTag: 'ui_component_fab',
+                  tooltip: '添加组件',
                   onPressed: () => _showComponentSheet(selectedId),
                   child: const Icon(Icons.add),
                 ),
               ),
-              // 页面管理 FAB（左下）：竖屏下也能管理页面
+              // 页面管理 FAB（左下）：竖屏下也能管理页面，大小与右下统一。
               Positioned(
                 left: 16,
                 bottom: 16,
-                child: FloatingActionButton.small(
+                child: FloatingActionButton(
                   heroTag: 'ui_page_fab',
                   tooltip: '页面管理',
                   onPressed: () => _showPageSheet(project),
@@ -195,6 +196,10 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
   }
 
   /// 竖屏下页面管理 BottomSheet。
+  ///
+  /// 与组件添加面板保持一致的交互：使用 `DraggableScrollableSheet` 提供
+  /// 可拖拽高度，`showDragHandle` 提供拖拽指示器，`isScrollControlled`
+  /// 允许面板占据更多屏幕空间。
   void _showPageSheet(Project project) {
     showModalBottomSheet<void>(
       context: context,
@@ -205,7 +210,10 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
         minChildSize: 0.3,
         maxChildSize: 0.9,
         expand: false,
-        builder: (ctx, controller) => PagePanel(project: project),
+        builder: (ctx, controller) => PagePanel(
+          project: project,
+          scrollController: controller,
+        ),
       ),
     );
   }
@@ -579,6 +587,87 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
                   ),
           ),
         );
+      case 'conditional_container':
+        // 选择式容器：当满足某一条件时，展示对应 case 的子容器内容。
+        //
+        // props:
+        // - condition: 当前生效的 case 名（用户可在属性面板切换；也可绑定变量）
+        // - mode: 'single'（默认，单选）/ 'firstMatch'（按顺序首匹配）
+        // - cases: 子节点列表（每个子节点的 props['case'] = case 名）
+        //
+        // 在编辑器中预览：展示当前 condition 对应 case 的子节点；同时展示
+        // 一个浅色边框 + "选择式: <condition>" 标签，便于识别。
+        // 若 condition 未匹配任何 case，展示第一个 case 作为占位预览。
+        final condition = _displayValue(node, 'condition', '');
+        final mode = (node.props['mode'] as String?) ?? 'single';
+        // 找到匹配的子节点（按 props['case'] 匹配 condition）。
+        UiNode? matched;
+        if (node.children.isNotEmpty) {
+          if (condition.isNotEmpty) {
+            for (final c in node.children) {
+              final caseName = (c.props['case'] as String?) ?? '';
+              if (caseName == condition) {
+                matched = c;
+                break;
+              }
+            }
+          }
+          // 未匹配 → 展示第一个 case 作为预览。
+          matched ??= node.children.first;
+        }
+        return Container(
+          width: double.infinity,
+          constraints: const BoxConstraints(minHeight: 60),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.secondaryContainer.withValues(alpha: 0.18),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: theme.colorScheme.primary.withValues(alpha: 0.45),
+              width: 1,
+            ),
+          ),
+          padding: const EdgeInsets.all(8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.alt_route, size: 14,
+                      color: theme.colorScheme.primary),
+                  const SizedBox(width: 4),
+                  Text(
+                    '选择式容器 · $mode'
+                    '${condition.isNotEmpty ? ' · 当前: $condition' : ''}',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.primary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text('${node.children.length} 个分支',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      )),
+                ],
+              ),
+              const SizedBox(height: 6),
+              if (matched != null)
+                _renderNode(theme, matched, selectedId)
+              else
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Text(
+                    '无子分支。添加子组件并设置其「case」属性来定义各分支内容。',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
       default:
         // 插件提供的 UI 组件：从 ComponentRegistry 查询并占位渲染。
         //
@@ -625,14 +714,24 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
     return map[name] ?? Icons.star;
   }
 
-  /// 取属性展示值；若该属性已绑定，显示 `{来源.名}` 占位。
+  /// 取属性展示值；若该属性已绑定，显示「前缀文字 + {变量}」。
+  ///
+  /// **自然变量引用语义**：用户在输入框中输入的文字作为「前缀文字」，
+  /// 绑定的变量作为「后缀变量」。运行时展示值 = 前缀文字 + 变量值。
+  /// 编辑器预览也按此语义显示，让用户直观感知最终效果。
   String _displayValue(UiNode node, String prop, String fallback) {
     final binding = node.bindings[prop];
+    final prefix = (node.props[prop] as String?) ?? fallback;
     if (binding != null) {
       final project = ref.read(uiMutatorProvider);
-      return _describeBinding(binding.ref, project);
+      final varDesc = _describeBinding(binding.ref, project);
+      // 前缀为空时只显示变量；非空时显示「前缀 + {变量}」。
+      if (prefix.isEmpty || prefix == fallback) {
+        return varDesc;
+      }
+      return '$prefix$varDesc';
     }
-    return (node.props[prop] as String?) ?? fallback;
+    return prefix;
   }
 
   /// 生成绑定的可读占位描述。
@@ -682,15 +781,25 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
 
   // ---- 组件面板 BottomSheet（窄屏）----
 
+  /// 竖屏下组件添加面板：与页面管理面板保持一致的交互（可拖拽高度 +
+  /// 拖拽指示器 + isScrollControlled），避免突兀的小卡片。
   void _showComponentSheet(String? selectedId) {
     showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
       showDragHandle: true,
-      builder: (ctx) => ComponentPanel(
-        onPick: (type) {
-          Navigator.pop(ctx);
-          _addComponent(type, selectedId);
-        },
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.6,
+        minChildSize: 0.3,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (ctx, controller) => ComponentPanel(
+          onPick: (type) {
+            Navigator.pop(ctx);
+            _addComponent(type, selectedId);
+          },
+          scrollController: controller,
+        ),
       ),
     );
   }
@@ -1061,6 +1170,7 @@ const List<_ComponentDef> _componentDefs = [
   _ComponentDef('tab_container', 'Tab 容器', Icons.tab, true, ComponentCategory.container),
   _ComponentDef('card', '卡片', Icons.credit_card, true, ComponentCategory.container),
   _ComponentDef('list_view', 'ListView', Icons.list, true, ComponentCategory.container),
+  _ComponentDef('conditional_container', '选择式容器', Icons.alt_route, true, ComponentCategory.container),
   // 指示器
   _ComponentDef('progress', '进度条', Icons.refresh, false, ComponentCategory.indicator),
 ];
@@ -1103,65 +1213,70 @@ bool _isContainerComponent(String type) {
 
 /// 组件面板：列出可添加组件，按分类分组（内置 + 插件提供）。
 class ComponentPanel extends ConsumerWidget {
-  const ComponentPanel({super.key, required this.onPick});
+  const ComponentPanel({
+    super.key,
+    required this.onPick,
+    this.scrollController,
+  });
 
   final ValueChanged<String> onPick;
+
+  /// 可选的滚动控制器（用于在 DraggableScrollableSheet 中同步滚动）。
+  final ScrollController? scrollController;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final pluginEntries =
         ref.watch(componentRegistryProvider).registry.all();
-    return SingleChildScrollView(
+    return ListView(
+      controller: scrollController,
       padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-            child: Text('组件', style: theme.textTheme.titleSmall),
-          ),
-          for (final cat in ComponentCategory.values)
-            if (_componentDefs.any((d) => d.category == cat) ||
-                pluginEntries.any((e) => e.category.name == cat.name)) ...[
-              _CategoryHeader(label: cat.label, theme: theme),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  for (final def in _componentDefs)
-                    if (def.category == cat)
-                      _ComponentChip(def: def, onTap: () => onPick(def.type)),
-                  for (final entry in pluginEntries)
-                    if (entry.category.name == cat.name)
-                      _PluginComponentChip(
-                        entry: entry,
-                        onTap: () => onPick(entry.type),
-                      ),
-                ],
-              ),
-              const SizedBox(height: 4),
-            ],
-          // 插件组件中分类不匹配任何内置分类的，归入「插件」分组。
-          if (pluginEntries.any((e) =>
-              !ComponentCategory.values.any((c) => c.name == e.category.name))) ...[
-            _CategoryHeader(label: '插件', theme: theme),
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+          child: Text('组件', style: theme.textTheme.titleSmall),
+        ),
+        for (final cat in ComponentCategory.values)
+          if (_componentDefs.any((d) => d.category == cat) ||
+              pluginEntries.any((e) => e.category.name == cat.name)) ...[
+            _CategoryHeader(label: cat.label, theme: theme),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
+                for (final def in _componentDefs)
+                  if (def.category == cat)
+                    _ComponentChip(def: def, onTap: () => onPick(def.type)),
                 for (final entry in pluginEntries)
-                  if (!ComponentCategory.values
-                      .any((c) => c.name == entry.category.name))
+                  if (entry.category.name == cat.name)
                     _PluginComponentChip(
                       entry: entry,
                       onTap: () => onPick(entry.type),
                     ),
               ],
             ),
+            const SizedBox(height: 4),
           ],
+        // 插件组件中分类不匹配任何内置分类的，归入「插件」分组。
+        if (pluginEntries.any((e) =>
+            !ComponentCategory.values.any((c) => c.name == e.category.name))) ...[
+          _CategoryHeader(label: '插件', theme: theme),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final entry in pluginEntries)
+                if (!ComponentCategory.values
+                    .any((c) => c.name == entry.category.name))
+                  _PluginComponentChip(
+                    entry: entry,
+                    onTap: () => onPick(entry.type),
+                  ),
+            ],
+          ),
         ],
-      ),
+      ],
     );
   }
 }
@@ -1375,6 +1490,14 @@ List<_PropDescriptor> _propsForType(String type) {
       ];
     case 'card':
       return const [_PropDescriptor('elevation', '阴影', _PropKind.number)];
+    case 'conditional_container':
+      // 选择式容器：condition 决定展示哪个 case 子节点；mode 为匹配策略。
+      // condition 可绑定变量（如列表项字段、函数输出等）实现动态切换。
+      return const [
+        _PropDescriptor('condition', '当前条件', _PropKind.text, bindable: true),
+        _PropDescriptor('mode', '匹配策略', _PropKind.dropdown,
+            options: ['single', 'firstMatch']),
+      ];
     case 'tab_container':
       return const [];
     case 'list_vertical':
@@ -1442,6 +1565,29 @@ List<_PropDescriptor> _propsForTypeWithPlugins(
   return const [];
 }
 
+/// 判断 [node] 的父节点是否为 conditional_container。
+///
+/// 用于在属性面板中决定是否前置「case」属性编辑器。
+bool _parentIsConditional(UiNode node, Project project) {
+  for (final root in project.ui) {
+    final result = _findParent(root, node.id);
+    if (result != null) {
+      return result.type == 'conditional_container';
+    }
+  }
+  return false;
+}
+
+/// 在 [root] 子树中查找 [childId] 的父节点；找不到返回 null。
+UiNode? _findParent(UiNode root, String childId) {
+  for (final c in root.children) {
+    if (c.id == childId) return root;
+    final deeper = _findParent(c, childId);
+    if (deeper != null) return deeper;
+  }
+  return null;
+}
+
 /// 组件支持的触发事件。
 List<String> _eventsForType(String type) {
   const lifecycle = ['onLoad', 'onUnload'];
@@ -1463,6 +1609,15 @@ List<String> _eventsForType(String type) {
       return ['onTabChange', ...lifecycle];
     case 'image':
     case 'video':
+      return ['onTap', ...lifecycle];
+    case 'conditional_container':
+      // 选择式容器：条件变化时触发（用于联动其他组件或记录日志）。
+      return ['onCaseChange', ...lifecycle];
+    case 'container':
+    case 'card':
+      return ['onTap', ...lifecycle];
+    case 'icon':
+    case 'badge':
       return ['onTap', ...lifecycle];
     default:
       return [...lifecycle];
@@ -1506,6 +1661,7 @@ String _eventLabel(String eventName) {
     'onItemTap': '点击列表项',
     'onScroll': '滚动',
     'onTabChange': 'Tab 切换',
+    'onCaseChange': '条件变更',
     'onLoad': '加载',
     'onUnload': '卸载',
     'onDispose': '页面销毁',
@@ -1536,6 +1692,18 @@ class PropertiesPanel extends ConsumerWidget {
     final titleText = pluginEntry != null
         ? '${pluginEntry.displayName} · ${node.id.substring(0, 6)}'
         : '${node.type} · ${node.id.substring(0, 6)}';
+
+    // 若该节点的父节点是 conditional_container，前置一个「case 名」属性
+    // 编辑器（用于在选择式容器中标识该子节点对应的分支名）。
+    final List<_PropDescriptor> effectiveProps;
+    if (project != null && _parentIsConditional(node, project)) {
+      effectiveProps = [
+        _PropDescriptor('case', '分支名(case)', _PropKind.text),
+        ...props,
+      ];
+    } else {
+      effectiveProps = props;
+    }
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
       child: Column(
@@ -1565,7 +1733,7 @@ class PropertiesPanel extends ConsumerWidget {
           ),
           const Divider(),
           // 属性编辑
-          for (final desc in props) ...[
+          for (final desc in effectiveProps) ...[
             _PropEditor(
               key: ValueKey('${node.id}:${desc.key}'),
               node: node,
@@ -1573,7 +1741,7 @@ class PropertiesPanel extends ConsumerWidget {
             ),
             const SizedBox(height: 8),
           ],
-          if (props.isEmpty)
+          if (effectiveProps.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
               child: Text(
@@ -1603,7 +1771,15 @@ class PropertiesPanel extends ConsumerWidget {
   }
 }
 
-/// 单个属性编辑器（含绑定开关）。
+/// 单个属性编辑器（自然变量引用）。
+///
+/// **自然变量引用**：任何文本/数值/颜色输入框都可直接插入变量，无需开关切换。
+/// 输入框右侧常驻 `#` 按钮，点击弹出变量选择面板。绑定后：
+/// - 输入框仍可继续编辑文本（作为「前缀文字」）
+/// - 输入框下方显示变量引用 chip（含变量名 + 移除按钮）
+/// - 运行时展示值 = 前缀文字 + 变量值（字符串拼接运算）
+///
+/// 这样用户可以在任意输入框中混合「字面量 + 变量」，无需打开工作流配置。
 class _PropEditor extends ConsumerStatefulWidget {
   const _PropEditor({super.key, required this.node, required this.desc});
 
@@ -1640,9 +1816,16 @@ class _PropEditorState extends ConsumerState<_PropEditor> {
     super.dispose();
   }
 
+  /// 该属性是否支持变量引用（文本/数值/颜色均可；下拉框不支持）。
+  bool get _supportsBinding =>
+      widget.desc.kind == _PropKind.text ||
+      widget.desc.kind == _PropKind.number ||
+      widget.desc.kind == _PropKind.color;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final cs = theme.colorScheme;
     final desc = widget.desc;
     final node = widget.node;
     final binding = node.bindings[desc.key];
@@ -1651,42 +1834,56 @@ class _PropEditorState extends ConsumerState<_PropEditor> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // 标签行：属性名 + 绑定状态指示（如有）
         Row(
           children: [
             Expanded(child: Text(desc.label, style: theme.textTheme.labelMedium)),
-            if (desc.bindable)
-              Switch(
-                value: isBound,
-                onChanged: (v) {
-                  final mutator = ref.read(uiMutatorProvider.notifier);
-                  if (v) {
-                    // 开启绑定：先不设置具体值，等用户选函数；用占位 Binding。
-                    mutator.setBinding(
-                      node.id,
-                      desc.key,
-                      const Binding(
-                        ref: VariableRef.upstream(
-                          nodeId: '',
-                          outputName: '',
-                        ),
-                      ),
-                    );
-                  } else {
-                    mutator.setBinding(node.id, desc.key, null);
-                  }
-                },
+            if (isBound)
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: cs.primaryContainer,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  '已绑定变量',
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: cs.onPrimaryContainer,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 10,
+                  ),
+                ),
               ),
           ],
         ),
-        if (desc.bindable && isBound)
+        const SizedBox(height: 4),
+        // 输入框 + # 按钮（文本/数值/颜色类型常驻 # 按钮）
+        if (_supportsBinding)
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: _buildField()),
+              const SizedBox(width: 4),
+              IconButton.outlined(
+                tooltip: isBound ? '更换变量' : '插入变量',
+                icon: Icon(Icons.tag, size: 18, color: cs.primary),
+                onPressed: () => _pickVariable(),
+              ),
+            ],
+          )
+        else
+          _buildField(),
+        // 绑定信息（变量引用 chip + 加载态策略）
+        if (isBound && _supportsBinding) ...[
+          const SizedBox(height: 6),
           _BindingEditor(
             key: ValueKey('${node.id}:${desc.key}'),
             node: node,
             prop: desc.key,
             binding: binding,
-          )
-        else
-          _buildField(),
+          ),
+        ],
       ],
     );
   }
@@ -1697,9 +1894,10 @@ class _PropEditorState extends ConsumerState<_PropEditor> {
       case _PropKind.text:
         return TextField(
           controller: _controller,
-          decoration: const InputDecoration(
+          decoration: InputDecoration(
             isDense: true,
-            border: OutlineInputBorder(),
+            border: const OutlineInputBorder(),
+            hintText: desc.bindable ? '输入文字，可点 # 插入变量' : null,
           ),
           onChanged: (v) => ref
               .read(uiMutatorProvider.notifier)
@@ -1757,101 +1955,13 @@ class _PropEditorState extends ConsumerState<_PropEditor> {
         );
     }
   }
-}
 
-/// 绑定编辑器：`#` 引用变量（四源）。
-///
-/// 点 `# 选择变量` 按钮弹出 [VariablePickerSheet]，支持项目变量 /
-/// 组件上下文变量 / 函数变量 / 上游节点输出四源统一引用。
-/// 选中含时间线的引用（页面函数 outputs / 组件上下文）时，附带加载态策略。
-class _BindingEditor extends ConsumerWidget {
-  const _BindingEditor({
-    super.key,
-    required this.node,
-    required this.prop,
-    required this.binding,
-  });
-
-  final UiNode node;
-  final String prop;
-  final Binding binding;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final theme = Theme.of(context);
-    final project = ref.watch(uiMutatorProvider);
-    if (project == null) return const SizedBox.shrink();
-
-    final refLabel = _describeRef(binding.ref, project);
-    final hasStrategy = binding.ref.isPageFunc ||
-        binding.ref.source == VariableSource.component;
-
-    return Padding(
-      padding: const EdgeInsets.only(left: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('变量引用 #',
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: theme.colorScheme.primary),),
-          const SizedBox(height: 4),
-          Row(
-            children: [
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 8,),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                        color: theme.colorScheme.outlineVariant, width: 0.75,),
-                  ),
-                  child: Text(
-                    refLabel,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      fontFamily: 'monospace',
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 6),
-              IconButton.outlined(
-                tooltip: '选择变量',
-                icon: const Icon(Icons.tag, size: 18),
-                onPressed: () => _pickVariable(context, ref, project),
-              ),
-            ],
-          ),
-          if (hasStrategy) ...[
-            const SizedBox(height: 6),
-            _StrategyChip(
-              strategy: binding.loadingStrategy,
-              placeholder: binding.placeholderText,
-              theme: theme,
-              onChanged: (s, p) => ref.read(uiMutatorProvider.notifier).setBinding(
-                node.id,
-                prop,
-                binding.copyWith(loadingStrategy: s, placeholderText: p),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Future<void> _pickVariable(
-    BuildContext context,
-    WidgetRef ref,
-    Project project,
-  ) async {
-    // UI 属性侧：解析当前组件所在容器链暴露的组件上下文变量。
-    // v1：暂按组件类型推导已知字段（item/index/value 等），不做完整树遍历。
+  /// 弹出变量选择面板；选中后设置绑定（保留当前输入框文本作为前缀）。
+  Future<void> _pickVariable() async {
+    final project = ref.read(uiMutatorProvider);
+    if (project == null) return;
+    final node = widget.node;
     final componentVars = _inferComponentContext(node, project);
-    // 页面级函数 outputs：v1 暂不传入（需页面绑定 onLoad 后才有）。
     final result = await VariablePickerSheet.show(
       context,
       functionId: '',
@@ -1862,7 +1972,7 @@ class _BindingEditor extends ConsumerWidget {
     if (result == null) return;
     ref.read(uiMutatorProvider.notifier).setBinding(
           node.id,
-          prop,
+          widget.desc.key,
           Binding(
             ref: result.ref,
             loadingStrategy: result.loadingStrategy,
@@ -1872,9 +1982,6 @@ class _BindingEditor extends ConsumerWidget {
   }
 
   /// 按 UI 节点类型推导其向子组件暴露的组件上下文字段（简化版）。
-  ///
-  /// 完整实现应在渲染时按组件树位置注入（T17）；此处用于属性面板的 `#`
-  /// 引用预览，提供常见字段供选择。
   List<ComponentContextVar> _inferComponentContext(UiNode n, Project project) {
     switch (n.type) {
       case 'list_vertical':
@@ -1900,33 +2007,123 @@ class _BindingEditor extends ConsumerWidget {
         return const [];
     }
   }
+}
 
-  /// 生成引用的可读描述。
-  String _describeRef(VariableRef r, Project project) {
-    switch (r.source) {
-      case VariableSource.upstream:
+/// 绑定信息展示器：显示已绑定的变量引用 + 移除按钮 + 加载态策略。
+///
+/// 变量选择由 [_PropEditor._pickVariable] 处理（输入框旁的 `#` 按钮），
+/// 此组件仅负责展示绑定信息、提供移除按钮、以及含时间线引用时的加载态策略。
+class _BindingEditor extends ConsumerWidget {
+  const _BindingEditor({
+    super.key,
+    required this.node,
+    required this.prop,
+    required this.binding,
+  });
+
+  final UiNode node;
+  final String prop;
+  final Binding binding;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final project = ref.watch(uiMutatorProvider);
+    if (project == null) return const SizedBox.shrink();
+
+    final refLabel = _describeBindingRef(binding.ref, project);
+    final hasStrategy = binding.ref.isPageFunc ||
+        binding.ref.source == VariableSource.component;
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 变量引用 chip：图标 + 名称 + 移除按钮
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: cs.primaryContainer.withValues(alpha: 0.4),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                  color: cs.primary.withValues(alpha: 0.4), width: 0.75),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.link, size: 14, color: cs.primary),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    '前缀文字 + $refLabel',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      fontFamily: 'monospace',
+                      color: cs.onSurface,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                InkWell(
+                  onTap: () => ref
+                      .read(uiMutatorProvider.notifier)
+                      .setBinding(node.id, prop, null),
+                  borderRadius: BorderRadius.circular(12),
+                  child: Padding(
+                    padding: const EdgeInsets.all(2),
+                    child: Icon(Icons.close,
+                        size: 14, color: cs.onSurfaceVariant),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (hasStrategy) ...[
+            const SizedBox(height: 6),
+            _StrategyChip(
+              strategy: binding.loadingStrategy,
+              placeholder: binding.placeholderText,
+              theme: theme,
+              onChanged: (s, p) => ref.read(uiMutatorProvider.notifier).setBinding(
+                node.id,
+                prop,
+                binding.copyWith(loadingStrategy: s, placeholderText: p),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// 生成变量引用的可读描述（用于绑定信息展示）。
+String _describeBindingRef(VariableRef r, Project project) {
+  switch (r.source) {
+    case VariableSource.upstream:
+      final fn = project.functions
+          .where((f) => f.id == r.nodeId)
+          .firstOrNull;
+      return '{${fn?.name ?? r.nodeId ?? '?'}.${r.outputName ?? '?'}}';
+    case VariableSource.funcVar:
+      if (r.isPageFunc) {
         final fn = project.functions
-            .where((f) => f.id == r.nodeId)
+            .where((f) => f.id == r.funcId)
             .firstOrNull;
-        return '${fn?.name ?? r.nodeId ?? '?'}.${r.outputName ?? '?'}';
-      case VariableSource.funcVar:
-        if (r.isPageFunc) {
-          final fn = project.functions
-              .where((f) => f.id == r.funcId)
-              .firstOrNull;
-          return '${fn?.name ?? r.funcId}.${r.outputName}';
-        }
-        return '函数变量 ${r.varId}';
-      case VariableSource.projVar:
-        final v = project.projectVars
-            .where((p) => p.id == r.varId)
-            .firstOrNull;
-        return '项目变量 ${v?.name ?? r.varId}';
-      case VariableSource.component:
-        return '组件 ${r.fieldName}';
-      case VariableSource.device:
-        return '设备 ${DeviceProperty.labelOf(r.property ?? '')}';
-    }
+        return '{${fn?.name ?? r.funcId}.${r.outputName}}';
+      }
+      return '{func:${r.varId}}';
+    case VariableSource.projVar:
+      final v = project.projectVars
+          .where((p) => p.id == r.varId)
+          .firstOrNull;
+      return '{proj:${v?.name ?? r.varId}}';
+    case VariableSource.component:
+      return '{#:${r.fieldName}}';
+    case VariableSource.device:
+      return '{device:${DeviceProperty.labelOf(r.property ?? '')}}';
   }
 }
 
@@ -2135,52 +2332,59 @@ class _SectionHeader extends StatelessWidget {
 // 页面管理面板（T21-T22）
 // ============================================================================
 
-/// 页面管理面板：页面列表 + 页面事件绑定。
+/// 页面管理面板：页面列表 + 页面事件绑定 + 组件层级树。
 ///
 /// 在宽屏布局中，当未选中任何 UI 组件时显示在右侧面板。
-/// 可新建页面、设置首页、绑定页面生命周期事件（onLoad/onDispose 等）到函数。
+/// 可新建页面、设置首页、绑定页面生命周期事件（onLoad/onDispose 等）到函数、
+/// 查看每个页面下的组件层级树（点击组件可定位选中）。
 class PagePanel extends ConsumerWidget {
-  const PagePanel({super.key, required this.project});
+  const PagePanel({
+    super.key,
+    required this.project,
+    this.scrollController,
+  });
 
   final Project project;
+
+  /// 可选的滚动控制器（用于在 DraggableScrollableSheet 中同步滚动）。
+  final ScrollController? scrollController;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final pages = project.pages;
-    return SingleChildScrollView(
+    return ListView(
+      controller: scrollController,
       padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.pages, size: 18, color: theme.colorScheme.primary),
-              const SizedBox(width: 6),
-              Text('页面', style: theme.textTheme.titleSmall),
-              const Spacer(),
-              IconButton(
-                tooltip: '新建页面',
-                icon: const Icon(Icons.add, size: 20),
-                onPressed: () => _addPage(context, ref),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Text(
-            '页面是 UI 的命名根，承载页面级触发（onLoad/onDispose）与页面作用域函数变量。',
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.pages, size: 18, color: theme.colorScheme.primary),
+            const SizedBox(width: 6),
+            Text('页面', style: theme.textTheme.titleSmall),
+            const Spacer(),
+            IconButton(
+              tooltip: '新建页面',
+              icon: const Icon(Icons.add, size: 20),
+              onPressed: () => _addPage(context, ref),
             ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '页面是 UI 的命名根，承载页面级触发（onLoad/onDispose）与页面作用域函数变量。'
+          '点击页面卡片可展开组件层级树。',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
           ),
-          const SizedBox(height: 8),
-          if (pages.isEmpty)
-            _EmptyHint(text: '暂无页面，点击 + 新建', theme: theme)
-          else
-            for (final pg in pages)
-              _PageCard(page: pg, project: project),
-        ],
-      ),
+        ),
+        const SizedBox(height: 8),
+        if (pages.isEmpty)
+          _EmptyHint(text: '暂无页面，点击 + 新建', theme: theme)
+        else
+          for (final pg in pages)
+            _PageCard(page: pg, project: project),
+      ],
     );
   }
 
@@ -2191,17 +2395,57 @@ class PagePanel extends ConsumerWidget {
   }
 }
 
-/// 单个页面卡片：展示页面信息 + 事件绑定。
-class _PageCard extends ConsumerWidget {
+/// 单个页面卡片：展示页面信息 + 事件绑定 + 组件层级树。
+///
+/// 点击卡片头部右侧的展开按钮可折叠/展开「组件层级树」——递归展示该页面
+/// 关联的 UI 根节点下的所有子组件，点击组件行可定位选中（画布会自动
+/// 选中对应组件并展示属性面板）。
+class _PageCard extends ConsumerStatefulWidget {
   const _PageCard({required this.page, required this.project});
 
   final Page page;
   final Project project;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_PageCard> createState() => _PageCardState();
+}
+
+class _PageCardState extends ConsumerState<_PageCard> {
+  bool _treeExpanded = false;
+
+  @override
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final mutator = ref.read(uiMutatorProvider.notifier);
+    final page = widget.page;
+    final project = widget.project;
+
+    // 找到该页面关联的 UI 根节点。
+    UiNode? rootNode;
+    if (page.rootUiNodeId != null) {
+      for (final n in project.ui) {
+        if (n.id == page.rootUiNodeId) {
+          rootNode = n;
+          break;
+        }
+      }
+    }
+    // 若未关联根节点，但项目只有 1 个 UI 根节点且无其他页面关联它，
+    // 自动以该根节点为组件树展示来源（更直观）。
+    if (rootNode == null && project.ui.isNotEmpty) {
+      // 仅当该页面是唯一/首页时尝试关联第一个未关联的根节点用于展示。
+      final unassignedRoots = project.ui.where((n) {
+        return project.pages.every((p) => p.rootUiNodeId != n.id);
+      }).toList();
+      if (unassignedRoots.length == 1) {
+        rootNode = unassignedRoots.first;
+      }
+    }
+
+    final childCount = rootNode == null
+        ? 0
+        : _countDescendants(rootNode);
+
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
@@ -2212,6 +2456,7 @@ class _PageCard extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // 标题行
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 10, 8, 4),
             child: Row(
@@ -2241,6 +2486,20 @@ class _PageCard extends ConsumerWidget {
                         style: theme.textTheme.labelSmall
                             ?.copyWith(fontWeight: FontWeight.w600)),
                   ),
+                // 组件层级树展开按钮（仅有根节点时显示）。
+                if (rootNode != null)
+                  IconButton(
+                    tooltip: _treeExpanded ? '折叠组件树' : '展开组件树',
+                    icon: Icon(
+                      _treeExpanded
+                          ? Icons.expand_less
+                          : Icons.chevron_right,
+                      size: 20,
+                    ),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: () =>
+                        setState(() => _treeExpanded = !_treeExpanded),
+                  ),
                 PopupMenuButton<String>(
                   icon: const Icon(Icons.more_vert, size: 18),
                   onSelected: (v) {
@@ -2248,7 +2507,7 @@ class _PageCard extends ConsumerWidget {
                       case 'home':
                         mutator.updatePage(page.id, isHome: true);
                       case 'rename':
-                        _rename(context, ref);
+                        _rename();
                       case 'delete':
                         mutator.removePage(page.id);
                     }
@@ -2267,17 +2526,31 @@ class _PageCard extends ConsumerWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('页面事件',
-                    style: theme.textTheme.labelSmall
-                        ?.copyWith(color: theme.colorScheme.primary)),
-                const SizedBox(height: 4),
-                for (final event in PageEventName.all)
-                  _PageEventRow(
-                    pageId: page.id,
-                    event: event,
-                    project: project,
+                // 组件层级树概要 + 展开内容
+                if (rootNode != null) ...[
+                  Row(
+                    children: [
+                      Icon(Icons.account_tree_outlined,
+                          size: 13, color: theme.colorScheme.onSurfaceVariant),
+                      const SizedBox(width: 4),
+                      Text(
+                        '$childCount 个组件 · 根: ${_nodeLabel(rootNode)}',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
                   ),
-                if (page.rootUiNodeId == null)
+                  if (_treeExpanded) ...[
+                    const SizedBox(height: 6),
+                    _ComponentTreeNode(
+                      node: rootNode,
+                      depth: 0,
+                      project: project,
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                ] else
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Text(
@@ -2288,6 +2561,16 @@ class _PageCard extends ConsumerWidget {
                       ),
                     ),
                   ),
+                Text('页面事件',
+                    style: theme.textTheme.labelSmall
+                        ?.copyWith(color: theme.colorScheme.primary)),
+                const SizedBox(height: 4),
+                for (final event in PageEventName.all)
+                  _PageEventRow(
+                    pageId: page.id,
+                    event: event,
+                    project: project,
+                  ),
               ],
             ),
           ),
@@ -2296,12 +2579,177 @@ class _PageCard extends ConsumerWidget {
     );
   }
 
-  Future<void> _rename(BuildContext context, WidgetRef ref) async {
+  Future<void> _rename() async {
     final name = await _promptString(context,
-        title: '重命名页面', hint: '页面名', initial: page.name);
+        title: '重命名页面', hint: '页面名', initial: widget.page.name);
     if (name == null || name.trim().isEmpty) return;
-    ref.read(uiMutatorProvider.notifier).updatePage(page.id, name: name.trim());
+    ref.read(uiMutatorProvider.notifier).updatePage(widget.page.id, name: name.trim());
   }
+}
+
+/// 递归统计节点后代数量（不含自身）。
+int _countDescendants(UiNode node) {
+  var count = node.children.length;
+  for (final c in node.children) {
+    count += _countDescendants(c);
+  }
+  return count;
+}
+
+/// 节点的简短显示标签。
+String _nodeLabel(UiNode node) {
+  final labelMap = <String, String>{
+    'column': '纵向布局',
+    'row': '横向布局',
+    'container': '容器',
+    'scaffold': '脚手架',
+    'text': '文本',
+    'button': '按钮',
+    'text_field': '输入框',
+    'image': '图片',
+    'video': '视频',
+    'icon': '图标',
+    'badge': '徽标',
+    'divider': '分割线',
+    'spacer': '空白',
+    'rich_text': '富文本',
+    'list_view': '列表',
+    'list_vertical': '纵向列表',
+    'list_horizontal': '横向列表',
+    'tab_container': 'Tab容器',
+    'card': '卡片',
+    'slider': '滑块',
+    'switch': '开关',
+    'checkbox': '复选框',
+    'progress': '进度条',
+    'conditional_container': '选择式容器',
+  };
+  final name = node.props['name']?.toString().trim();
+  if (name != null && name.isNotEmpty) return name;
+  // 文本/按钮等组件展示其文本内容作为辅助识别。
+  if (node.type == 'text' || node.type == 'button' ||
+      node.type == 'rich_text') {
+    final content = (node.props['content'] as String?) ??
+        (node.props['label'] as String?) ??
+        '';
+    if (content.isNotEmpty) return '${labelMap[node.type] ?? node.type}($content)';
+  }
+  return labelMap[node.type] ?? node.type;
+}
+
+/// 组件树节点（递归渲染组件层级）。
+///
+/// 每行：缩进 + 图标 + 类型标签 + 后代数；点击行选中该组件（画布同步选中）。
+class _ComponentTreeNode extends ConsumerWidget {
+  const _ComponentTreeNode({
+    required this.node,
+    required this.depth,
+    required this.project,
+  });
+
+  final UiNode node;
+  final int depth;
+  final Project project;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final selectedId = ref.watch(selectedUiNodeIdProvider);
+    final selected = node.id == selectedId;
+    final hasChildren = node.children.isNotEmpty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        InkWell(
+          onTap: () {
+            ref.read(uiMutatorProvider.notifier).selectComponent(node.id);
+          },
+          borderRadius: BorderRadius.circular(6),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 6),
+            decoration: BoxDecoration(
+              color: selected
+                  ? cs.primaryContainer.withValues(alpha: 0.6)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Row(
+              children: [
+                SizedBox(width: depth * 14.0),
+                Icon(
+                  hasChildren ? Icons.subdirectory_arrow_right : Icons.circle,
+                  size: hasChildren ? 14 : 6,
+                  color: cs.onSurfaceVariant,
+                ),
+                const SizedBox(width: 4),
+                Icon(_componentTypeIcon(node.type),
+                    size: 13, color: cs.onSurfaceVariant),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    _nodeLabel(node),
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: selected ? cs.onPrimaryContainer : cs.onSurface,
+                      fontWeight:
+                          selected ? FontWeight.w600 : FontWeight.w400,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (hasChildren)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 4),
+                    child: Text(
+                      '${node.children.length}',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        fontSize: 10,
+                        color: cs.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        for (final c in node.children)
+          _ComponentTreeNode(node: c, depth: depth + 1, project: project),
+      ],
+    );
+  }
+}
+
+/// 按组件类型返回对应图标（用于组件树展示）。
+IconData _componentTypeIcon(String type) {
+  const map = <String, IconData>{
+    'column': Icons.view_agenda,
+    'row': Icons.view_column,
+    'container': Icons.crop_square,
+    'scaffold': Icons.web_asset,
+    'text': Icons.text_fields,
+    'button': Icons.smart_button_outlined,
+    'text_field': Icons.keyboard,
+    'image': Icons.image_outlined,
+    'video': Icons.smart_display,
+    'icon': Icons.emoji_emotions,
+    'badge': Icons.mark_chat_unread,
+    'divider': Icons.horizontal_rule,
+    'spacer': Icons.space_bar,
+    'rich_text': Icons.text_snippet,
+    'list_view': Icons.list,
+    'list_vertical': Icons.view_list,
+    'list_horizontal': Icons.view_stream,
+    'tab_container': Icons.tab,
+    'card': Icons.credit_card,
+    'slider': Icons.linear_scale,
+    'switch': Icons.toggle_on,
+    'checkbox': Icons.check_box,
+    'progress': Icons.refresh,
+    'conditional_container': Icons.alt_route,
+  };
+  return map[type] ?? Icons.widgets_outlined;
 }
 
 /// 页面事件绑定行：选择触发的函数。

@@ -10,12 +10,17 @@ import 'plugin_manifest.dart';
 /// Web 平台不支持 dart:io（Directory / File），改用 SharedPreferences
 /// （底层 localStorage）持久化已安装插件清单。
 ///
-/// 数据布局：
-/// - `web.installed_plugins.index`：JSON 数组，每项为 [PluginManifest] 序列化。
+/// 数据布局（按插件分键，避免单键全量重写导致的配额超限）：
+/// - `web.installed_plugins.ids`：JSON 数组，存所有已安装插件的 id 列表（索引）。
+/// - `web.installed_plugins.manifest.<id>`：单个插件的 [PluginManifest] JSON。
+///
+/// 这样 save/remove 只需改索引 + 单个 manifest 键，避免把所有大体积 manifest
+/// 反复全量序列化写入单键（function 类型插件 manifest 可能数百 KB）。
 class SharedPrefsInstalledPluginStore implements InstalledPluginStore {
   SharedPrefsInstalledPluginStore();
 
-  static const String _indexKey = 'web.installed_plugins.index';
+  static const String _idsKey = 'web.installed_plugins.ids';
+  static const String _manifestKeyPrefix = 'web.installed_plugins.manifest.';
 
   SharedPreferences? _prefs;
 
@@ -23,71 +28,87 @@ class SharedPrefsInstalledPluginStore implements InstalledPluginStore {
     return _prefs ??= await SharedPreferences.getInstance();
   }
 
-  Future<List<PluginManifest>> _readIndex() async {
+  String _manifestKey(String pluginId) => '$_manifestKeyPrefix$pluginId';
+
+  Future<List<String>> _readIds() async {
     final prefs = await _sp();
-    final raw = prefs.getString(_indexKey);
+    final raw = prefs.getString(_idsKey);
     if (raw == null || raw.isEmpty) return const [];
     try {
       final decoded = jsonDecode(raw);
       if (decoded is! List) return const [];
-      final result = <PluginManifest>[];
-      for (final item in decoded) {
-        if (item is Map<String, dynamic>) {
-          try {
-            result.add(PluginManifest.fromJson(item));
-          } catch (_) {
-            // 跳过损坏条目
-          }
-        }
-      }
-      return result;
+      return decoded.whereType<String>().toList(growable: true);
     } catch (_) {
       return const [];
     }
   }
 
-  Future<void> _writeIndex(List<PluginManifest> manifests) async {
+  Future<void> _writeIds(List<String> ids) async {
     final prefs = await _sp();
-    final encoded = jsonEncode(
-        manifests.map((m) => m.toJson()).toList());
-    await prefs.setString(_indexKey, encoded);
+    await prefs.setString(_idsKey, jsonEncode(ids));
   }
 
   @override
-  Future<List<PluginManifest>> listInstalled() => _readIndex();
+  Future<List<PluginManifest>> listInstalled() async {
+    final prefs = await _sp();
+    final ids = await _readIds();
+    final result = <PluginManifest>[];
+    for (final id in ids) {
+      final raw = prefs.getString(_manifestKey(id));
+      if (raw == null || raw.isEmpty) continue;
+      try {
+        result.add(PluginManifest.fromJson(
+            jsonDecode(raw) as Map<String, dynamic>));
+      } catch (_) {
+        // 跳过损坏条目
+      }
+    }
+    return result;
+  }
 
   @override
   Future<PluginManifest?> getInstalled(String pluginId) async {
-    final all = await _readIndex();
-    for (final m in all) {
-      if (m.id == pluginId) return m;
+    final prefs = await _sp();
+    final raw = prefs.getString(_manifestKey(pluginId));
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      return PluginManifest.fromJson(
+          jsonDecode(raw) as Map<String, dynamic>);
+    } catch (_) {
+      return null;
     }
-    return null;
   }
 
   @override
   Future<void> save(PluginManifest manifest) async {
-    final all = await _readIndex();
-    final idx = all.indexWhere((m) => m.id == manifest.id);
-    if (idx >= 0) {
-      all[idx] = manifest;
-    } else {
-      all.add(manifest);
+    final prefs = await _sp();
+    final ids = await _readIds();
+    // 写入单插件 manifest 键。
+    await prefs.setString(
+        _manifestKey(manifest.id), jsonEncode(manifest.toJson()));
+    // 更新索引（若为新插件则追加）。
+    if (!ids.contains(manifest.id)) {
+      ids.add(manifest.id);
+      await _writeIds(ids);
     }
-    await _writeIndex(all);
   }
 
   @override
   Future<void> remove(String pluginId) async {
-    final all = await _readIndex();
-    all.removeWhere((m) => m.id == pluginId);
-    await _writeIndex(all);
+    final prefs = await _sp();
+    final ids = await _readIds();
+    // 删除单插件 manifest 键。
+    await prefs.remove(_manifestKey(pluginId));
+    // 更新索引。
+    if (ids.remove(pluginId)) {
+      await _writeIds(ids);
+    }
   }
 
   @override
   Future<bool> isInstalled(String pluginId) async {
-    final all = await _readIndex();
-    return all.any((m) => m.id == pluginId);
+    final prefs = await _sp();
+    return prefs.containsKey(_manifestKey(pluginId));
   }
 }
 

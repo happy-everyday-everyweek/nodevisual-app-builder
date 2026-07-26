@@ -526,6 +526,13 @@ class UiMutator extends Notifier<Project?> {
         return UiNode(id: id, type: type, props: const {});
       case 'card':
         return UiNode(id: id, type: type, props: const {'elevation': 1});
+      case 'conditional_container':
+        // 选择式容器默认：condition 为空字符串（展示第一个 case 作为预览），
+        // mode 为 single（精确匹配 case 名）。
+        return UiNode(id: id, type: type, props: const {
+          'condition': '',
+          'mode': 'single',
+        });
       default:
         return UiNode(id: id, type: type, props: const {});
     }

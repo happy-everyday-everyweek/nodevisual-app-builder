@@ -218,6 +218,9 @@ class _NodeCardState extends State<NodeCard>
     }
 
     // 指针模式：单击打开编辑器；长按放大并进入拖拽，松手还原。
+    // 入参/出参节点与其它节点一样，可点击打开编辑器、可长按拖动、
+    // 可参与连线——它们是函数的入口/出口，必须能正常连线才能让
+    // 整个函数图可用。仅删除按钮被隐藏（不可删除）。
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () {
@@ -258,11 +261,19 @@ class _NodeCardState extends State<NodeCard>
 
   Widget _buildHeader(ThemeData theme, ColorScheme cs) {
     final related = widget.relatedLabel;
+    // function_input / function_output 是函数固有入口/出口，不允许删除，
+    // 也不显示删除按钮（避免用户误以为可删除）。
+    final isProtected = widget.node.kind == 'function_input' ||
+        widget.node.kind == 'function_output';
+    // 受保护节点（入参/出参）使用特殊背景色，便于识别。
+    final headerColor = isProtected
+        ? cs.tertiaryContainer.withValues(alpha: 0.6)
+        : cs.surfaceContainerHigh;
     return Container(
       height: NodeLayout.headerHeight,
       padding: const EdgeInsets.only(left: 12, right: 6),
       decoration: BoxDecoration(
-        color: cs.surfaceContainerHigh,
+        color: headerColor,
         borderRadius: const BorderRadius.only(
           topLeft: Radius.circular(11),
           topRight: Radius.circular(11),
@@ -303,7 +314,8 @@ class _NodeCardState extends State<NodeCard>
             ),
           ],
           const Spacer(),
-          if (widget.onDelete != null)
+          // 受保护节点不显示删除按钮；其余节点显示删除按钮。
+          if (!isProtected && widget.onDelete != null)
             SizedBox(
               width: 24,
               height: 24,
