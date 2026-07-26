@@ -98,9 +98,6 @@ class _NodeCardState extends State<NodeCard>
   /// 长按拖拽过程中累计的上一次触点位置（视口坐标），用于计算 delta。
   Offset? _lastLongPressPosition;
 
-  /// 鼠标/指针直接拖拽过程中累计的上一次触点位置（视口坐标）。
-  Offset? _lastPanPosition;
-
   @override
   void initState() {
     super.initState();
@@ -221,11 +218,9 @@ class _NodeCardState extends State<NodeCard>
     }
 
     // 指针模式：单击打开编辑器；长按放大并进入拖拽，松手还原。
-    // 同时支持鼠标/指针直接拖拽（onPan*），在 Web/桌面端更直观，且与
-    // 长按拖拽共存：快速点击打开编辑器，按住移动直接拖动节点。
     // 入参/出参节点与其它节点一样，可点击打开编辑器、可长按拖动、
-    // 可直接拖拽、可参与连线——它们是函数的入口/出口，必须能正常连线
-    // 才能让整个函数图可用。仅删除按钮被隐藏（不可删除）。
+    // 可参与连线——它们是函数的入口/出口，必须能正常连线才能让
+    // 整个函数图可用。仅删除按钮被隐藏（不可删除）。
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () {
@@ -246,26 +241,6 @@ class _NodeCardState extends State<NodeCard>
       },
       onLongPressEnd: (_) {
         _lastLongPressPosition = null;
-        _lift.reverse();
-      },
-      onPanStart: (details) {
-        widget.onSelect?.call();
-        _lastPanPosition = details.globalPosition;
-        _lift.forward();
-      },
-      onPanUpdate: (details) {
-        final last = _lastPanPosition;
-        _lastPanPosition = details.globalPosition;
-        if (last == null || widget.onDragUpdate == null) return;
-        final delta = details.globalPosition - last;
-        if (delta != Offset.zero) widget.onDragUpdate!(delta);
-      },
-      onPanEnd: (_) {
-        _lastPanPosition = null;
-        _lift.reverse();
-      },
-      onPanCancel: () {
-        _lastPanPosition = null;
         _lift.reverse();
       },
       child: _buildColumn(theme, cs),
