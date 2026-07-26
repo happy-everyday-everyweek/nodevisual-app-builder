@@ -127,6 +127,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: build-apk
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     outputs:
       tag: ${{ steps.artifact.outputs.tag }}
 
