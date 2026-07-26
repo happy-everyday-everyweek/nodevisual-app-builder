@@ -99,11 +99,55 @@ class MarketplaceClient {
         );
       }
     } catch (_) {
-      // raw URL 失败时降级为下载 ZIP
+      // raw URL 失败时降级到 GitHub Contents API（Web 端 CORS 友好）。
     }
 
-    // 降级：下载仓库 ZIP，解压后读取 plugin.json
+    // 降级 1：GitHub Contents API（api.github.com 带 CORS 头，Web 端可用）。
+    // 返回 JSON，content 字段为 base64 编码的 plugin.json 内容。
+    try {
+      final manifest = await _fetchViaGitHubContentsApi(entry, repoInfo);
+      if (manifest != null) return manifest;
+    } catch (_) {
+      // Contents API 失败（如速率限制、私有仓库）时再降级到 ZIP。
+    }
+
+    // 降级 2：下载仓库 ZIP，解压后读取 plugin.json。
+    // 注意：codeload.github.com 不带 CORS 头，Web 端此路径通常失败；
+    // 主要服务于桌面/移动端。
     return _downloadAndExtractManifest(entry, repoInfo);
+  }
+
+  /// 通过 GitHub Contents API 获取 plugin.json。
+  ///
+  /// api.github.com 返回 `Access-Control-Allow-Origin: *`，Web 端不受
+  /// CORS 限制。响应 JSON 的 `content` 字段为 base64 编码的文件内容。
+  /// 未认证时有 60 次/小时的速率限制，对市场安装场景足够。
+  Future<PluginManifest?> _fetchViaGitHubContentsApi(
+    MarketplaceEntry entry,
+    _GitHubRepo repoInfo,
+  ) async {
+    final apiUrl =
+        'https://api.github.com/repos/${repoInfo.owner}/${repoInfo.repo}/'
+        'contents/plugin.json?ref=${entry.branch}';
+    final response = await _httpClient.get(
+      Uri.parse(apiUrl),
+      headers: const {
+        'Accept': 'application/vnd.github+json',
+      },
+    );
+    if (response.statusCode != 200) return null;
+    final body = jsonDecode(response.body);
+    if (body is! Map<String, dynamic>) return null;
+    final content = body['content'];
+    if (content is! String) return null;
+    // content 可能含换行符，需先移除再 base64 解码。
+    final cleaned = content.replaceAll(RegExp(r'\s'), '');
+    final bytes = base64.decode(cleaned);
+    final pluginJson = utf8.decode(bytes);
+    return PluginManifest.parse(pluginJson).copyWith(
+      sourceRepoUrl: entry.repoUrl,
+      installedAt: DateTime.now().toIso8601String(),
+    );
   }
 
   Future<PluginManifest> _downloadAndExtractManifest(

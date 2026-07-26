@@ -145,6 +145,7 @@ class _VersionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final cs = theme.colorScheme;
     final current = project.meta.semver;
     final hasHistory = versions.isNotEmpty;
 
@@ -156,9 +157,11 @@ class _VersionCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(Icons.history, size: 20, color: theme.colorScheme.primary),
+                Icon(Icons.history, size: 20, color: cs.primary),
                 const SizedBox(width: 8),
-                Text('版本管理', style: theme.textTheme.titleMedium),
+                Text('版本管理',
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(color: cs.onSurface)),
               ],
             ),
             const SizedBox(height: 12),
@@ -168,18 +171,19 @@ class _VersionCard extends StatelessWidget {
                 _VersionBadge(
                   label: '当前',
                   value: 'v$current',
-                  color: theme.colorScheme.surfaceContainerHighest,
-                  onColor: theme.colorScheme.onSurface,
+                  color: cs.surfaceContainerHighest,
+                  onColor: cs.onSurface,
                 ),
                 const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 8),
-                  child: Icon(Icons.arrow_forward, size: 18),
+                  child:
+                      Icon(Icons.arrow_forward, size: 18, color: cs.onSurface),
                 ),
                 _VersionBadge(
                   label: '即将发布',
                   value: 'v$targetSemver',
-                  color: theme.colorScheme.primaryContainer,
-                  onColor: theme.colorScheme.onPrimaryContainer,
+                  color: cs.primaryContainer,
+                  onColor: cs.onPrimaryContainer,
                 ),
                 const Spacer(),
                 if (project.meta.githubRepoUrl != null)
@@ -218,13 +222,15 @@ class _VersionCard extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             // 版本历史
-            Text('版本历史', style: theme.textTheme.titleSmall),
+            Text('版本历史',
+                style: theme.textTheme.titleSmall
+                    ?.copyWith(color: cs.onSurface)),
             const SizedBox(height: 8),
             if (!hasHistory)
               Text(
                 '尚未发布过版本',
                 style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+                  color: cs.onSurface,
                 ),
               )
             else
@@ -275,15 +281,16 @@ class _VersionBadge extends StatelessWidget {
           Text(
             label,
             style: TextStyle(
-              fontSize: 10,
-              color: onColor.withValues(alpha: 0.7),
+              fontSize: 11,
+              color: onColor.withValues(alpha: 0.95),
+              fontWeight: FontWeight.w500,
             ),
           ),
           Text(
             value,
             style: TextStyle(
               fontSize: 14,
-              fontWeight: FontWeight.w600,
+              fontWeight: FontWeight.w700,
               color: onColor,
             ),
           ),
@@ -319,6 +326,7 @@ class _VersionHistoryTile extends StatelessWidget {
               'v${version.semver}',
               style: theme.textTheme.bodyMedium?.copyWith(
                 fontWeight: FontWeight.w600,
+                color: theme.colorScheme.onSurface,
               ),
             ),
             const SizedBox(width: 12),
@@ -326,14 +334,15 @@ class _VersionHistoryTile extends StatelessWidget {
               child: Text(
                 dtStr,
                 style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
+                  color: theme.colorScheme.onSurface,
                 ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
             if (version.releaseUrl != null)
-              const Icon(Icons.open_in_new, size: 14),
+              Icon(Icons.open_in_new,
+                  size: 14, color: theme.colorScheme.onSurface),
           ],
         ),
       ),
@@ -362,14 +371,16 @@ class _CompileStep extends ConsumerWidget {
               children: [
                 _StepBadge(index: 1),
                 const SizedBox(width: 8),
-                Text('编译', style: theme.textTheme.titleMedium),
+                Text('编译',
+                    style: theme.textTheme.titleMedium
+                        ?.copyWith(color: theme.colorScheme.onSurface)),
               ],
             ),
             const SizedBox(height: 8),
             Text(
               '选择目标平台并完成端侧编译打包。产物可用于分发步骤或直接下载。',
               style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
+                color: theme.colorScheme.onSurface,
               ),
             ),
             const SizedBox(height: 12),

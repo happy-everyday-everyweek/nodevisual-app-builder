@@ -65,8 +65,13 @@ class InstalledPluginsNotifier
   }
 
   /// 安装插件。
+  ///
+  /// 安装过程中保留上一次的已安装列表（previousData），避免 UI 上"已安装"
+  /// 标记在 loading 态瞬间全部消失。错误时保留旧数据并标记 error。
   Future<void> install(MarketplaceEntry entry) async {
-    state = const AsyncValue.loading();
+    final previous = state;
+    state = const AsyncValue<List<PluginManifest>>.loading()
+        .copyWithPrevious(previous);
     try {
       final client = _ref.read(marketplaceClientProvider);
       final store = _ref.read(installedPluginStoreProvider);
@@ -81,7 +86,8 @@ class InstalledPluginsNotifier
       final installed = await store.listInstalled();
       state = AsyncValue.data(installed);
     } catch (e, st) {
-      state = AsyncValue.error(e, st);
+      state = AsyncValue<List<PluginManifest>>.error(e, st)
+          .copyWithPrevious(previous);
       rethrow;
     }
   }

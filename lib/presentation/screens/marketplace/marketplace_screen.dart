@@ -301,10 +301,11 @@ class _PluginsTab extends ConsumerWidget {
         onRetry: () => ref.invalidate(marketplaceIndexProvider),
       ),
       data: (index) {
-        final installedIds = asyncInstalled.maybeWhen(
-          data: (list) => list.map((m) => m.id).toSet(),
-          orElse: () => <String>{},
-        );
+        // 用 valueOrNull 而非 maybeWhen(data:...)，这样安装 loading 期间
+        // （AsyncValue.loading().copyWithPrevious）仍能取到上一次的已安装列表，
+        // 避免所有"已安装"标记瞬间消失。
+        final installedList = asyncInstalled.valueOrNull ?? const [];
+        final installedIds = installedList.map((m) => m.id).toSet();
 
         var plugins = index.plugins;
         if (searchQuery.isNotEmpty) {

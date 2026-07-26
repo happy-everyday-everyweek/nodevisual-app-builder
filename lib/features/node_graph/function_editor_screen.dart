@@ -6,6 +6,7 @@ import '../../core/constants.dart';
 import '../../data/models/entry.dart';
 import '../../data/models/function_def.dart';
 import '../../data/models/node.dart';
+import '../build_pipeline/build_providers.dart';
 import '../build_pipeline/build_target.dart';
 import '../marketplace/marketplace_providers.dart';
 import '../marketplace/plugin_function_validator.dart';
@@ -549,11 +550,28 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
               tooltip: '删除选中节点',
               onPressed: () => _onNodeDelete(selectedNodeId),
             ),
-          IconButton(
-            icon: const Icon(Icons.warning_amber_outlined),
-            tooltip: '校验图',
-            onPressed: () => _showValidation(fn),
-          ),
+          Builder(builder: (context) {
+            // 实时计算校验状态，让按钮图标/颜色反映最高级别。
+            final issues = _computeIssues(fn);
+            final hasError = issues.any((i) => i.severity == IssueSeverity.error);
+            final hasWarning =
+                issues.any((i) => i.severity == IssueSeverity.warning);
+            final color = hasError
+                ? Theme.of(context).colorScheme.error
+                : hasWarning
+                    ? Colors.amber.shade700
+                    : Colors.green;
+            final icon = hasError
+                ? Icons.error
+                : hasWarning
+                    ? Icons.warning
+                    : Icons.check_circle;
+            return IconButton(
+              icon: Icon(icon, color: color),
+              tooltip: '校验图',
+              onPressed: () => _showValidation(fn),
+            );
+          }),
           IconButton(
             icon: const Icon(Icons.publish_outlined),
             tooltip: '发布为插件',
@@ -644,14 +662,20 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
               ),
             ),
             // 控制流连线层。
+            // IgnorePointer 让连线层不参与命中测试，所有点击/长按事件
+            // 穿透到下方的背景 GestureDetector（由它负责连线选中/删除
+            // 与空白点击取消选中）。否则 CustomPaint 会吸收命中，
+            // 导致背景手势无法触发。
             Positioned.fill(
-              child: CustomPaint(
-                painter: ConnectionPainter(
-                  edges: fn.controlEdges,
-                  portPositions: portPositions,
-                  color: theme.colorScheme.primary,
-                  selectedEdgeKey: _selectedEdgeKey,
-                  selectedColor: theme.colorScheme.error,
+              child: IgnorePointer(
+                child: CustomPaint(
+                  painter: ConnectionPainter(
+                    edges: fn.controlEdges,
+                    portPositions: portPositions,
+                    color: theme.colorScheme.primary,
+                    selectedEdgeKey: _selectedEdgeKey,
+                    selectedColor: theme.colorScheme.error,
+                  ),
                 ),
               ),
             ),
@@ -881,12 +905,53 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
     );
   }
 
+  /// 计算当前函数的校验问题（图结构 + 多端平台）。
+  List<DagValidationIssue> _computeIssues(FunctionDef fn) {
+    final issues = DagValidator.validateGraph(fn);
+    final targets = ref.read(selectedBuildTargetsProvider);
+    if (targets.isNotEmpty) {
+      issues.addAll(DagValidator.validatePlatforms(fn, targets));
+    }
+    return issues;
+  }
+
+  /// 将视口居中到指定节点。
+  void _focusNode(String nodeId) {
+    final fn = ref.read(graphMutatorProvider);
+    if (fn == null) return;
+    final node = fn.nodes.where((n) => n.id == nodeId).firstOrNull;
+    if (node == null) return;
+    final renderObj = _viewerKey.currentContext?.findRenderObject();
+    if (renderObj is! RenderBox || !renderObj.hasSize) return;
+    final viewportSize = renderObj.size;
+    final scale = _transformController.value.getMaxScaleOnAxis();
+    // 节点中心画布坐标。
+    final nodeCanvasCenter = Offset(
+      node.position.x + NodeLayout.width / 2,
+      node.position.y + NodeLayout.headerHeight / 2,
+    );
+    // 目标：节点中心映射到视口中心。
+    // viewport = matrix * scene → tx = viewportCenter - scale * nodeCenter
+    final tx = viewportSize.width / 2 - scale * nodeCanvasCenter.dx;
+    final ty = viewportSize.height / 2 - scale * nodeCanvasCenter.dy;
+    final matrix = Matrix4.identity()..setScale(scale, scale);
+    matrix[12] = tx;
+    matrix[13] = ty;
+    _transformController.value = matrix;
+    ref.read(selectedNodeIdProvider.notifier).state = nodeId;
+  }
+
   void _showValidation(FunctionDef fn) {
-    final errors = DagValidator.validateGraph(fn);
+    final issues = _computeIssues(fn);
+    final hasError = issues.any((i) => i.severity == IssueSeverity.error);
+    final hasWarning = issues.any((i) => i.severity == IssueSeverity.warning);
+    final hasAutoFixable = issues.any((i) => i.autoFixable);
     if (!mounted) return;
     showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
       builder: (ctx) {
+        final theme = Theme.of(ctx);
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.all(16),
@@ -897,35 +962,74 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
                 Row(
                   children: [
                     Icon(
-                      errors.isEmpty ? Icons.check_circle : Icons.error_outline,
-                      color: errors.isEmpty
+                      issues.isEmpty
+                          ? Icons.check_circle
+                          : hasError
+                              ? Icons.error
+                              : Icons.warning,
+                      color: issues.isEmpty
                           ? Colors.green
-                          : Theme.of(ctx).colorScheme.error,
+                          : hasError
+                              ? theme.colorScheme.error
+                              : Colors.amber.shade700,
                     ),
                     const SizedBox(width: 8),
-                    Text(
-                      errors.isEmpty ? '图校验通过' : '图校验发现 ${errors.length} 个问题',
-                      style: Theme.of(ctx).textTheme.titleMedium,
+                    Expanded(
+                      child: Text(
+                        issues.isEmpty
+                            ? '图校验通过'
+                            : '图校验发现 ${issues.length} 个问题'
+                                '${hasError ? "（含错误）" : hasWarning ? "（仅警告）" : ""}',
+                        style: theme.textTheme.titleMedium,
+                      ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 12),
-                if (errors.isEmpty)
+                if (issues.isEmpty)
                   const Text('当前控制流图无环、无孤立节点、无悬挂引用。')
                 else
-                  ...errors.map(
-                    (e) => Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('• '),
-                          Expanded(child: Text(e)),
-                        ],
-                      ),
+                  Flexible(
+                    child: ListView(
+                      shrinkWrap: true,
+                      children: [
+                        for (final issue in issues)
+                          _ValidationIssueTile(
+                            issue: issue,
+                            onTap: () {
+                              if (issue.nodeId != null) {
+                                Navigator.pop(ctx);
+                                _focusNode(issue.nodeId!);
+                              }
+                            },
+                          ),
+                      ],
                     ),
                   ),
                 const SizedBox(height: 12),
+                if (hasAutoFixable)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: FilledButton.tonalIcon(
+                      onPressed: () {
+                        final removed = ref
+                            .read(graphMutatorProvider.notifier)
+                            .autoFixIsolatedNodes();
+                        Navigator.pop(ctx);
+                        if (mounted && removed.isNotEmpty) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                                content: Text('已自动删除 ${removed.length} 个孤立节点')),
+                          );
+                          // 刷新校验面板。
+                          final newFn = ref.read(graphMutatorProvider);
+                          if (newFn != null) _showValidation(newFn);
+                        }
+                      },
+                      icon: const Icon(Icons.auto_fix_high),
+                      label: const Text('自动修复（删除孤立节点）'),
+                    ),
+                  ),
                 Align(
                   alignment: Alignment.centerRight,
                   child: FilledButton(
@@ -1404,7 +1508,9 @@ class _FunctionTriggerSheetState extends ConsumerState<_FunctionTriggerSheet> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final entry = widget.initial.entry;
+    // watch 当前函数状态，使删除/修改触发器后面板实时刷新。
+    final fn = ref.watch(graphMutatorProvider) ?? widget.initial;
+    final entry = fn.entry;
     final mutator = ref.read(graphMutatorProvider.notifier);
 
     return DraggableScrollableSheet(
@@ -1424,7 +1530,7 @@ class _FunctionTriggerSheetState extends ConsumerState<_FunctionTriggerSheet> {
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      '触发器 — ${widget.initial.name}',
+                      '触发器 — ${fn.name}',
                       style: theme.textTheme.titleMedium,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
@@ -2064,6 +2170,57 @@ class _PortChip extends StatelessWidget {
                 fontFamily: 'monospace',
               )),
         ],
+      ),
+    );
+  }
+}
+
+/// 校验问题列表项：可点击聚焦到关联节点。
+class _ValidationIssueTile extends StatelessWidget {
+  const _ValidationIssueTile({required this.issue, required this.onTap});
+
+  final DagValidationIssue issue;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isError = issue.severity == IssueSeverity.error;
+    final color = isError ? theme.colorScheme.error : Colors.amber.shade700;
+    final canFocus = issue.nodeId != null;
+    return InkWell(
+      onTap: canFocus ? onTap : null,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Icon(
+                isError ? Icons.error_outline : Icons.warning_amber,
+                size: 16,
+                color: color,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                issue.message,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurface,
+                ),
+              ),
+            ),
+            if (canFocus)
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Icon(Icons.center_focus_strong,
+                    size: 14, color: theme.colorScheme.primary),
+              ),
+          ],
+        ),
       ),
     );
   }

@@ -308,9 +308,17 @@ class GraphMutator extends Notifier<FunctionDef?> {
   }
 
   /// 删除节点；同时删除其关联的所有控制流边，并清除其选中态。
+  ///
+  /// **保护**：`function_input` / `function_output` 节点是函数的固有
+  /// 入口/出口，不允许删除（否则破坏函数语义）。
   void removeNode(String id) {
     final fn = _currentFunction;
     if (fn == null) return;
+    final target = fn.nodes.where((n) => n.id == id).firstOrNull;
+    if (target == null) return;
+    if (target.kind == 'function_input' || target.kind == 'function_output') {
+      return;
+    }
     final newNodes =
         fn.nodes.where((n) => n.id != id).toList(growable: false);
     final newEdges = fn.controlEdges
@@ -320,6 +328,29 @@ class GraphMutator extends Notifier<FunctionDef?> {
     if (ref.read(selectedNodeIdProvider) == id) {
       ref.read(selectedNodeIdProvider.notifier).state = null;
     }
+  }
+
+  /// 自动修复：删除所有孤立节点（无入边且无出边，且非 function_input/output）。
+  ///
+  /// 返回被删除的节点 id 列表（供 UI 反馈）。
+  List<String> autoFixIsolatedNodes() {
+    final fn = _currentFunction;
+    if (fn == null) return const [];
+    final isolatedIds = DagValidator.collectIsolatedNodes(fn).toSet();
+    if (isolatedIds.isEmpty) return const [];
+    final newNodes = fn.nodes
+        .where((n) => !isolatedIds.contains(n.id))
+        .toList(growable: false);
+    final newEdges = fn.controlEdges
+        .where((e) =>
+            !isolatedIds.contains(e.fromNode) &&
+            !isolatedIds.contains(e.toNode))
+        .toList(growable: false);
+    _commit(fn.copyWith(nodes: newNodes, controlEdges: newEdges));
+    if (isolatedIds.contains(ref.read(selectedNodeIdProvider))) {
+      ref.read(selectedNodeIdProvider.notifier).state = null;
+    }
+    return isolatedIds.toList(growable: false);
   }
 
   /// 更新节点参数（整体替换 params）。
