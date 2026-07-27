@@ -5,6 +5,7 @@ import '../models/entry.dart';
 import '../models/folder.dart';
 import '../models/function_def.dart';
 import '../models/node.dart';
+import '../models/page.dart';
 import '../models/port.dart';
 import '../models/project.dart';
 import '../models/ui_tree.dart';
@@ -79,6 +80,9 @@ class IrValidator {
         ),);
       }
     }
+
+    // 校验 UI 树 pageId：所有非 Page 的 UiNode 必须有 pageId。
+    _validateUiPageIds(project, issues);
 
     return issues;
   }
@@ -404,9 +408,10 @@ class IrValidator {
   /// 校验函数 entry 的 ref 引用。
   ///
   /// - [EntryKind.uiEvent]：ref 指向 UI 节点 id（`componentId::eventName`），
-  ///   需在 [Project.ui] 树中存在。
+  ///   需在 [Project.ui] 树中存在（Page 节点及其子树）。
   /// - [EntryKind.pageEvent]：ref 形如 `<pageId>:<event>`，校验 pageId 在
-  ///   [Project.pages] 中存在、event ∈ [PageEventName.all]。
+  ///   [Project.ui] 中存在对应的 Page 节点（type=='page'）、
+  ///   event ∈ [PageEventName.all]。
   /// - [EntryKind.funcCall]：ref 为空（由调用方决定），无需校验。
   /// - [EntryKind.timer] / [EntryKind.external]：v1 不校验配置存在性。
   static void _validateEntry(
@@ -451,9 +456,10 @@ class IrValidator {
           ),);
           break;
         }
+        // 在 [Project.ui] 中查找 type=='page' 且 id 匹配的 Page 节点。
         bool pageExists = false;
-        for (final p in project.pages) {
-          if (p.id == pageId) {
+        for (final p in project.ui) {
+          if (p.type == kPageType && p.id == pageId) {
             pageExists = true;
             break;
           }
@@ -483,6 +489,34 @@ class IrValidator {
       if (_uiNodeExists(node.children, id)) return true;
     }
     return false;
+  }
+
+  /// 校验 UI 树 pageId：所有非 Page 的 UiNode 必须有 pageId。
+  ///
+  /// Page 节点（type == [kPageType]）本身不需要 pageId（节点即页面）；
+  /// 其余所有 UiNode（Page 的子树中的组件节点）必须携带非空 pageId，
+  /// 用于标记其所属页面。
+  static void _validateUiPageIds(Project project, List<Issue> issues) {
+    void checkNode(UiNode node, String path) {
+      // Page 节点本身不需要 pageId。
+      if (node.type != kPageType) {
+        if (node.pageId == null || node.pageId!.isEmpty) {
+          issues.add(Issue(
+            severity: IssueSeverity.error,
+            path: path,
+            message: 'UI 节点 ${node.id} (type=${node.type}) 缺少 pageId'
+                '（仅 Page 节点可省略 pageId）',
+          ),);
+        }
+      }
+      for (var i = 0; i < node.children.length; i++) {
+        checkNode(node.children[i], '$path.children[$i]');
+      }
+    }
+
+    for (var i = 0; i < project.ui.length; i++) {
+      checkNode(project.ui[i], 'ui[$i]');
+    }
   }
 
   /// 校验文件夹树：parentId 指向存在 + parentId 无环。

@@ -420,18 +420,21 @@ class WebRuntimeTemplate {
     const root = document.getElementById("app-root");
     if (!root) return;
     root.innerHTML = "";
-    // PROJECT.ui 为顶层 UI 节点数组。v1 渲染首个根（或首个标记为 home 的 Page
-    // 关联的根）。后续页面切换由 SPA 路由处理（待实现）。
-    const roots = Array.isArray(PROJECT.ui) ? PROJECT.ui : (PROJECT.ui.tree ? [PROJECT.ui.tree] : []);
-    if (roots.length === 0) return;
-    const firstPageId = (PROJECT.pages && PROJECT.pages.length > 0) ? PROJECT.pages[0].id : null;
-    let uiRoot = roots[0];
-    if (firstPageId) {
-      const matched = roots.find(r => r.pageId === firstPageId);
-      if (matched) uiRoot = matched;
-    }
-    const el = renderNode(uiRoot, null);
-    if (el) root.appendChild(el);
+    // PROJECT.ui 为 Page 节点数组（type='page'）。每个 Page 节点的 children
+    // 为该页面的 UI 根节点树。v1 渲染首页（isHome=true）或首个 Page。
+    // 后续页面切换由 SPA 路由处理（待实现）。
+    const pages = Array.isArray(PROJECT.ui)
+      ? PROJECT.ui.filter(function(n) { return n && n.type === "page"; })
+      : [];
+    if (pages.length === 0) return;
+    var pageNode = pages.find(function(p) { return p.props && p.props.isHome === true; });
+    if (!pageNode) pageNode = pages[0];
+    // Page 节点的 children 为该页面的 UI 根节点树；渲染所有根节点。
+    var pageChildren = pageNode.children || [];
+    pageChildren.forEach(function(child) {
+      var el = renderNode(child, null);
+      if (el) root.appendChild(el);
+    });
   }
 
   function renderNode(uiNode, parent) {
@@ -856,7 +859,7 @@ class WebRuntimeTemplate {
         // 触发所有页面 onLoad 函数（kind=pageEvent, ref=<pageId>:onLoad）。
         // v1 Web 端按声明序执行所有页面的 onLoad（单页应用按页面切换时
         // 也应触发，但 v1 简化为初始化时一次性触发首个页面）。
-        const pages = PROJECT.pages || [];
+        const pages = (PROJECT.ui || []).filter(function(n) { return n && n.type === "page"; });
         const firstPageId = pages.length > 0 ? pages[0].id : null;
         for (const fn of PROJECT.functions) {
           if (!fn.entry || fn.entry.kind !== "pageEvent") continue;

@@ -337,43 +337,52 @@ class UiMutator extends Notifier<Project?> {
 
   // ---- 页面管理 ----
 
-  /// 新建页面；可选关联 UI 根节点。
-  Page? addPage(String name, {String? rootUiNodeId}) {
+  /// 新建页面；返回创建的 Page 节点（特殊 UiNode，type=='page'）。
+  ///
+  /// Page 节点的 children 为该页面的 UI 根节点树（初始为空）。
+  /// 首个页面自动设为首页（isHome=true）。
+  UiNode? addPage(String name) {
     final p = _project;
     if (p == null) return null;
-    final page = Page(
+    final isFirstPage = p.ui.where((n) => n.isPage).isEmpty;
+    final pageNode = createPageNode(
       id: _uuid.v4(),
       name: name,
-      rootUiNodeId: rootUiNodeId,
-      isHome: p.pages.isEmpty,
+      isHome: isFirstPage,
     );
-    _commit(p.copyWith(pages: [...p.pages, page]));
-    return page;
+    _commit(p.copyWith(ui: [...p.ui, pageNode]));
+    return pageNode;
   }
 
-  /// 更新页面字段。
-  void updatePage(String pageId, {String? name, String? rootUiNodeId, String? route, bool? isHome}) {
+  /// 更新页面字段（Page 节点的 props）。
+  ///
+  /// [name] / [route] / [isHome] 直接写入 Page 节点的 props。
+  /// isHome 唯一性：设为 home 时清除其他 Page 节点的 isHome。
+  void updatePage(String pageId, {String? name, String? route, bool? isHome}) {
     final p = _project;
     if (p == null) return;
-    var newPages = p.pages.map((pg) {
-      if (pg.id != pageId) return pg;
-      return pg.copyWith(
-        name: name,
-        rootUiNodeId: rootUiNodeId,
-        route: route,
-        isHome: isHome,
-      );
+    var newUi = p.ui.map((node) {
+      if (node.id != pageId || !node.isPage) return node;
+      final newProps = Map<String, dynamic>.from(node.props);
+      if (name != null) newProps[PagePropsKeys.name] = name;
+      if (route != null) newProps[PagePropsKeys.route] = route;
+      if (isHome == true) newProps[PagePropsKeys.isHome] = true;
+      return node.copyWith(props: newProps);
     }).toList(growable: false);
-    // isHome 唯一性：设为 home 时清除其他页面的 isHome。
+    // isHome 唯一性：设为 home 时清除其他 Page 节点的 isHome。
     if (isHome == true) {
-      newPages = newPages
-          .map((pg) => pg.id == pageId ? pg : pg.copyWith(isHome: false))
-          .toList(growable: false);
+      newUi = newUi.map((node) {
+        if (!node.isPage || node.id == pageId) return node;
+        if (!node.isHomePage) return node;
+        final newProps = Map<String, dynamic>.from(node.props);
+        newProps.remove(PagePropsKeys.isHome);
+        return node.copyWith(props: newProps);
+      }).toList(growable: false);
     }
-    _commit(p.copyWith(pages: newPages));
+    _commit(p.copyWith(ui: newUi));
   }
 
-  /// 删除页面；同时清除关联的页面事件 entry。
+  /// 删除页面（Page 节点）；同时清除关联的页面事件 entry。
   void removePage(String pageId) {
     final p = _project;
     if (p == null) return;
@@ -387,7 +396,7 @@ class UiMutator extends Notifier<Project?> {
       return f;
     }).toList(growable: false);
     _commit(p.copyWith(
-      pages: p.pages.where((pg) => pg.id != pageId).toList(growable: false),
+      ui: p.ui.where((n) => n.id != pageId).toList(growable: false),
       functions: newFuncs,
     ));
   }

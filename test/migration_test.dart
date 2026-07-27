@@ -18,7 +18,7 @@ import 'package:nodevisual_app_builder/data/models/variable_ref.dart';
 /// - 旧版 uiEvent entry ref（仅 componentId）与新格式 `componentId::eventName` 兼容；
 /// - pageEvent entry 的 pageId / pageEvent 正确解析；
 /// - VariableRef 四源 JSON 往返序列化；
-/// - 旧式 Project（无 pages 字段）加载 pages 默认为空。
+/// - 旧式 Project（无 ui 字段）加载 ui 默认为空。
 void main() {
   group('FunctionDef.migrateSignature', () {
     test('无签名 + 无 funcVars：保持空 inputs/outputs', () {
@@ -176,7 +176,7 @@ void main() {
   });
 
   group('Project 迁移', () {
-    test('旧式 IR（无 pages 字段）加载后 pages 默认为空', () {
+    test('旧式 IR（无 ui 字段）加载后 ui 默认为空', () {
       final project = Project.fromJson({
         'meta': {
           'id': 'p1',
@@ -189,13 +189,12 @@ void main() {
         'functions': const [],
         'folders': const [],
         'db': const [],
-        // 注意：故意不写 pages 字段
-        'ui': const [],
+        // 注意：故意不写 ui 字段
       });
-      expect(project.pages, isEmpty);
+      expect(project.ui, isEmpty);
     });
 
-    test('完整 Project 含 pages 序列化往返保持一致', () {
+    test('完整 Project 含 Page 节点序列化往返保持一致', () {
       final project = Project(
         meta: const ProjectMeta(
           id: 'p2',
@@ -204,8 +203,14 @@ void main() {
           updatedAt: '2026-01-01',
           version: '1',
         ),
-        pages: [
-          Page(id: 'page-1', name: '首页', rootUiNodeId: 'root1'),
+        ui: [
+          createPageNode(
+            id: 'page-1',
+            name: '首页',
+            children: [
+              UiNode(id: 'root1', type: 'Column', pageId: 'page-1'),
+            ],
+          ),
         ],
         functions: [
           FunctionDef(
@@ -227,9 +232,15 @@ void main() {
       final json = project.toJson();
       final restored = Project.fromJson(json);
 
-      expect(restored.pages.length, 1);
-      expect(restored.pages.first.id, 'page-1');
-      expect(restored.pages.first.name, '首页');
+      expect(restored.ui.length, 1);
+      // Page 作为特殊 UiNode（type=='page'）存于 ui 列表。
+      expect(restored.ui.first.id, 'page-1');
+      expect(restored.ui.first.isPage, isTrue);
+      expect(restored.ui.first.pageName, '首页');
+      // Page 节点的 children 为该页面的 UI 根节点树。
+      expect(restored.ui.first.children.first.id, 'root1');
+      expect(restored.ui.first.children.first.type, 'Column');
+      expect(restored.ui.first.children.first.pageId, 'page-1');
 
       expect(restored.functions.length, 1);
       final fn = restored.functions.first;

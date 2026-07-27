@@ -99,12 +99,11 @@ void main() {
         nodes: [returnNode],
         outputs: const [FuncParam(name: 'items', type: PortType.list)],
       );
-      final page = Page(id: 'page-1', name: '首页', rootUiNodeId: 'root-1', isHome: true);
-
       // 子 card 内含 text，text 的 content 绑定到 component 源 item.name。
       final textInCard = UiNode(
         id: 'text-1',
         type: 'Text',
+        pageId: 'page-1',
         bindings: {
           'text': Binding(
             ref: const VariableRef.component(
@@ -117,6 +116,7 @@ void main() {
       final cardTemplate = UiNode(
         id: 'card-tpl',
         type: 'card',
+        pageId: 'page-1',
         children: [textInCard],
       );
       final listNode = UiNode(
@@ -139,6 +139,13 @@ void main() {
         pageId: 'page-1',
         children: [listNode],
       );
+      // Page 作为特殊 UiNode（type='page'），其 children 为该页面的 UI 根节点树。
+      final pageNode = createPageNode(
+        id: 'page-1',
+        name: '首页',
+        isHome: true,
+        children: [rootUi],
+      );
 
       final project = Project(
         meta: const ProjectMeta(
@@ -148,27 +155,32 @@ void main() {
           updatedAt: '2026-01-01',
           version: '1',
         ),
-        pages: [page],
         functions: [onLoadFn],
-        ui: [rootUi],
+        ui: [pageNode],
       );
 
       // 序列化往返验证
       final json = project.toJson();
       final restored = Project.fromJson(json);
-      expect(restored.pages.first.id, 'page-1');
+      expect(restored.ui.first.id, 'page-1');
+      expect(restored.ui.first.isPage, isTrue);
       expect(restored.functions.first.id, 'fn-onload');
       expect(restored.functions.first.outputs.first.name, 'items');
-      expect(restored.ui.first.type, 'Column');
-      expect(restored.ui.first.children.first.type, 'list_vertical');
+      // ui.first 是 Page 节点；其 children.first 才是 UI 根（Column）。
+      expect(restored.ui.first.children.first.type, 'Column');
+      expect(
+        restored.ui.first.children.first.children.first.type,
+        'list_vertical',
+      );
 
-      final listBinding = restored.ui.first.children.first.bindings['items']!;
+      final listBinding = restored
+          .ui.first.children.first.children.first.bindings['items']!;
       expect(listBinding.ref.isPageFunc, isTrue);
       expect(listBinding.ref.funcId, 'fn-onload');
       expect(listBinding.ref.outputName, 'items');
 
       final textBinding = restored.ui.first.children.first.children.first
-          .children.first.bindings['text']!;
+          .children.first.children.first.bindings['text']!;
       expect(textBinding.ref.source, VariableSource.component);
       expect(textBinding.ref.componentId, 'list-1');
       expect(textBinding.ref.fieldName, 'item.name');
@@ -193,6 +205,7 @@ void main() {
       final textBelowSlider = UiNode(
         id: 'text-2',
         type: 'Text',
+        pageId: 'page-2',
         bindings: {
           'text': Binding(
             ref: const VariableRef.component(
@@ -215,7 +228,12 @@ void main() {
         pageId: 'page-2',
         children: [sliderNode],
       );
-      final page = Page(id: 'page-2', name: '滑块页', rootUiNodeId: 'root-2', isHome: true);
+      final pageNode = createPageNode(
+        id: 'page-2',
+        name: '滑块页',
+        isHome: true,
+        children: [rootUi],
+      );
 
       final project = Project(
         meta: const ProjectMeta(
@@ -225,13 +243,14 @@ void main() {
           updatedAt: '2026-01-01',
           version: '1',
         ),
-        pages: [page],
-        ui: [rootUi],
+        ui: [pageNode],
       );
 
       // 序列化往返验证
       final restored = Project.fromJson(project.toJson());
-      final slider = restored.ui.first.children.first;
+      // ui.first 是 Page 节点；其 children.first 是 UI 根（Column），
+      // 再下一层才是 slider。
+      final slider = restored.ui.first.children.first.children.first;
       expect(slider.type, 'slider');
       expect(slider.props['value'], 50);
 
@@ -274,7 +293,11 @@ void main() {
         nodes: [returnNode],
         outputs: const [FuncParam(name: 'userId', type: PortType.string)],
       );
-      final page = Page(id: 'page-3', name: '用户页', rootUiNodeId: 'root-3', isHome: true);
+      final page = createPageNode(
+        id: 'page-3',
+        name: '用户页',
+        isHome: true,
+      );
 
       final textNode = UiNode(
         id: 'text-3',
@@ -297,6 +320,8 @@ void main() {
         pageId: 'page-3',
         children: [textNode],
       );
+      // 将 UI 根挂到 Page 节点下。
+      final pageNode = page.copyWith(children: [rootUi]);
 
       final project = Project(
         meta: const ProjectMeta(
@@ -306,9 +331,8 @@ void main() {
           updatedAt: '2026-01-01',
           version: '1',
         ),
-        pages: [page],
         functions: [onLoadFn],
-        ui: [rootUi],
+        ui: [pageNode],
       );
 
       // 序列化往返验证
@@ -319,7 +343,10 @@ void main() {
       expect(fn.entry?.pageEvent, PageEventName.onLoad);
       expect(fn.outputs.first.name, 'userId');
 
-      final textBinding = restored.ui.first.children.first.bindings['text']!;
+      // ui.first 是 Page 节点；其 children.first 是 UI 根（Column），
+      // 再下一层才是 text。
+      final textBinding = restored
+          .ui.first.children.first.children.first.bindings['text']!;
       expect(textBinding.ref.isPageFunc, isTrue);
       expect(textBinding.ref.funcId, 'fn-onload-3');
       expect(textBinding.ref.outputName, 'userId');
@@ -348,6 +375,7 @@ void main() {
       final textNode = UiNode(
         id: 'text-4',
         type: 'Text',
+        pageId: 'page-4',
         bindings: {
           'text': Binding(
             ref: const VariableRef.projVar(varId: 'pv-greeting'),
@@ -357,7 +385,14 @@ void main() {
       final rootUi = UiNode(
         id: 'root-4',
         type: 'Column',
+        pageId: 'page-4',
         children: [textNode],
+      );
+      final pageNode = createPageNode(
+        id: 'page-4',
+        name: '项目变量页',
+        isHome: true,
+        children: [rootUi],
       );
       final project = Project(
         meta: const ProjectMeta(
@@ -368,14 +403,17 @@ void main() {
           version: '1',
         ),
         projectVars: [projVar],
-        ui: [rootUi],
+        ui: [pageNode],
       );
 
       final restored = Project.fromJson(project.toJson());
       expect(restored.projectVars.first.id, 'pv-greeting');
       expect(restored.projectVars.first.defaultValue, 'Hello, NodeVisual!');
 
-      final textBinding = restored.ui.first.children.first.bindings['text']!;
+      // ui.first 是 Page 节点；其 children.first 是 UI 根（Column），
+      // 再下一层才是 text。
+      final textBinding = restored
+          .ui.first.children.first.children.first.bindings['text']!;
       expect(textBinding.ref.source, VariableSource.projVar);
       expect(textBinding.ref.varId, 'pv-greeting');
 
@@ -407,12 +445,20 @@ void main() {
       final buttonNode = UiNode(
         id: 'btn-1',
         type: 'ElevatedButton',
+        pageId: 'page-5',
         props: {'label': '点我', 'onTap': 'fn-tap'},
       );
       final rootUi = UiNode(
         id: 'root-5',
         type: 'Column',
+        pageId: 'page-5',
         children: [buttonNode],
+      );
+      final pageNode = createPageNode(
+        id: 'page-5',
+        name: '事件触发页',
+        isHome: true,
+        children: [rootUi],
       );
       final project = Project(
         meta: const ProjectMeta(
@@ -423,7 +469,7 @@ void main() {
           version: '1',
         ),
         functions: [buttonFn],
-        ui: [rootUi],
+        ui: [pageNode],
       );
 
       final restored = Project.fromJson(project.toJson());
