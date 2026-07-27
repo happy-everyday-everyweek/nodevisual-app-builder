@@ -96,25 +96,10 @@ class RelativeLayoutRenderObject extends RenderBox
       child = pd.nextSibling;
     }
 
-    // 4. 每个 cell 内排序 + 定位。
+    // 4. 每个 cell 内按 children 列表顺序定位（不按 distance 排序）。
     groups.forEach((cell, children) {
-      // 排序：按 distance.value 升序。
-      final sorted = _sortCellQueue(children);
-      _positionCell(cell, sorted, childSizes, size);
+      _positionCell(cell, children, childSizes, size);
     });
-  }
-
-  /// 按 [DistanceSpec.value] 升序排序（小=靠近起始边=先渲染）。
-  List<RenderBox> _sortCellQueue(List<RenderBox> children) {
-    final sorted = List<RenderBox>.of(children);
-    sorted.sort((a, b) {
-      final da =
-          (a.parentData as LayoutParentData).layout?.distance?.value ?? 0;
-      final db =
-          (b.parentData as LayoutParentData).layout?.distance?.value ?? 0;
-      return da.compareTo(db);
-    });
-    return sorted;
   }
 
   /// 为指定 cell 的子组件计算并设置 [LayoutParentData.offset]。

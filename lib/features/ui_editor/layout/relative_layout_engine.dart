@@ -38,24 +38,14 @@ class RelativeLayoutEngine {
     return groups;
   }
 
-  /// 按 cell 的堆叠方向对队列排序。
+  /// 返回 cell 内的堆叠队列（保持 `children` 列表顺序）。
   ///
-  /// 各 cell 的排序键均为「距对应起始边的距离」升序：
-  /// - 顶部 cell（1/2/3）：距顶边距离升序（小=靠近顶部=先渲染）
-  /// - 底部 cell（7/8/9）：距底边距离升序（小=靠近底部=先渲染）
-  /// - 左侧 cell（4）：距左边距离升序（小=靠近左侧=先渲染）
-  /// - 右侧 cell（6）：距右边距离升序（小=靠近右侧=先渲染）
-  /// - 中心 cell（5）：距中心距离升序
+  /// 队列顺序由父组件 `children` 列表顺序决定，用户通过长按移动模式
+  /// （`MoveModeHandler`）拖动组件来调整顺序。
   ///
-  /// 距离值取自 [DistanceSpec.value]；未指定时按 0 处理（最靠近边）。
+  /// `distance.value` 仅作为首个组件距起始边的偏移量，不影响队列顺序。
   static List<UiNode> sortCellQueue(int cell, List<UiNode> children) {
-    final sorted = List<UiNode>.of(children);
-    sorted.sort((a, b) {
-      final da = a.layout?.distance?.value ?? 0;
-      final db = b.layout?.distance?.value ?? 0;
-      return da.compareTo(db);
-    });
-    return sorted;
+    return List<UiNode>.of(children);
   }
 
   /// 计算组件距父组件哪边最近。

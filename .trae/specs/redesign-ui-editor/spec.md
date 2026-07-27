@@ -151,6 +151,12 @@
 - **AND** 后续加入同格的组件按堆叠方向追加（如左上格：从上往下追加）
 - **AND** 渲染时组件按堆叠方向与对齐方式排列
 
+#### Scenario: 堆叠队列顺序来源
+- **WHEN** 系统渲染同一 cell 内的多个组件
+- **THEN** 队列顺序由父组件 `children` 列表顺序决定（而非 `distance.value` 排序）
+- **AND** `distance` 仅作为首个组件距起始边的偏移量，不影响队列顺序
+- **AND** 用户通过长按移动模式拖动组件来调整 `children` 列表顺序（详见"长按进入移动模式"）
+
 #### Scenario: 中心格的双向堆叠
 - **WHEN** 用户选择中心格(row2,col2)
 - **AND** 拖动放置组件到中心上方
@@ -230,7 +236,7 @@
 - **WHEN** 系统存储父组件的子组件列表
 - **THEN** 子组件存储为单一列表（children）
 - **AND** 每个子组件的 layout 配置中包含 mode（relative/absolute）和 cell（9宫格之一，仅相对布局）
-- **AND** 渲染时按 mode + cell 分组并按堆叠方向排序
+- **AND** 渲染时按 mode + cell 分组，同一 cell 内按 `children` 列表顺序堆叠（不按 distance 排序）
 - **AND** 不在数据模型中创建10个独立的层列表
 
 ### Requirement: 动画系统
