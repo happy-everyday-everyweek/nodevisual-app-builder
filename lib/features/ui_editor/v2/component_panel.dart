@@ -196,8 +196,11 @@ class _CategorySection extends ConsumerWidget {
   void _addComponent(WidgetRef ref, String type) {
     final mutator = ref.read(uiMutatorProvider.notifier);
     final selectedId = ref.read(selectedUiNodeIdProvider);
+    final pageId = ref.read(selectedPageIdProvider);
+    // Phase 6：addComponent 强制 pageId 校验，无选中页面时无法添加。
+    if (pageId == null || pageId.isEmpty) return;
 
-    String? parentId = ref.read(selectedPageIdProvider);
+    String? parentId = pageId;
     // 若选中了容器类组件，添加为该容器的子组件。
     if (selectedId != null) {
       final found = mutator.findNode(selectedId);
@@ -206,8 +209,7 @@ class _CategorySection extends ConsumerWidget {
         parentId = selectedId;
       }
     }
-    if (parentId == null) return;
-    mutator.addComponent(type, parentId: parentId);
+    mutator.addComponent(type, parentId: parentId, pageId: pageId);
   }
 }
 

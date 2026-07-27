@@ -85,11 +85,11 @@ class PagePanel extends ConsumerWidget {
       hint: '页面名',
     );
     if (name == null || name.trim().isEmpty) return;
-    final created =
+    final pageId =
         ref.read(uiMutatorProvider.notifier).addPage(name.trim());
-    if (created != null) {
+    if (pageId.isNotEmpty) {
       // 新建后自动选中。
-      ref.read(selectedPageIdProvider.notifier).state = created.id;
+      ref.read(selectedPageIdProvider.notifier).state = pageId;
     }
   }
 }

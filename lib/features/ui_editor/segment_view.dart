@@ -837,7 +837,11 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
 
   void _addComponent(String type, String? selectedId) {
     final mutator = ref.read(uiMutatorProvider.notifier);
-    // 若选中了可容纳子节点的组件，添加为其子节点；否则添加为根节点。
+    final project = ref.read(uiMutatorProvider);
+    if (project == null) return;
+    // Phase 6：addComponent 强制 pageId 校验。优先用当前选中页面，
+    // 否则取选中容器所属页面，再退化为项目首个页面。
+    String? pageId = ref.read(selectedPageIdProvider);
     String? parentId;
     if (selectedId != null) {
       final found = mutator.findNode(selectedId);
@@ -845,9 +849,19 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
       if (found != null &&
           _canHaveChildrenWithPlugins(found.node.type, pluginEntries)) {
         parentId = selectedId;
+        // 继承选中容器所属页面。
+        final ownerPage = mutator.getNodePage(selectedId);
+        if (ownerPage != null) pageId = ownerPage.id;
       }
     }
-    mutator.addComponent(type, parentId: parentId);
+    if (pageId == null || pageId.isEmpty) {
+      // 无选中页面：退化为项目首个 Page（保证可添加）。
+      final firstPage = project.ui.where((n) => n.isPage).firstOrNull;
+      if (firstPage == null) return;
+      pageId = firstPage.id;
+      if (parentId == null) parentId = pageId;
+    }
+    mutator.addComponent(type, parentId: parentId, pageId: pageId);
   }
 
   // ---- 组件面板 BottomSheet（窄屏）----
