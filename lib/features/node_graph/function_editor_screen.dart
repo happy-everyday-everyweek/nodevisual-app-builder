@@ -18,6 +18,8 @@ import 'graph_providers.dart';
 import 'node_kinds.dart';
 import 'node_layout.dart';
 import 'node_widget.dart';
+import 'test_run_panel.dart';
+import 'test_run_state.dart';
 
 /// 函数节点图编辑器屏幕（Task 4 核心）。
 ///
@@ -376,9 +378,13 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
     // 无起始节点：本次点击作为起始。
     if (node.controlOutputs.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('该节点无控制流输出端口，无法作为连线起点'),
-          duration: Duration(seconds: 2),
+        SnackBar(
+          content: Text(
+            node.kind == 'function_output'
+                ? '出参节点是函数终点，只能作为连线目标：请先点击起始节点，再点击出参节点。'
+                : '该节点无控制流输出端口，无法作为连线起点，但可作为目标。',
+          ),
+          duration: const Duration(seconds: 3),
         ),
       );
       return;
@@ -508,6 +514,7 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
   Widget build(BuildContext context) {
     final fn = ref.watch(graphMutatorProvider);
     final selectedNodeId = ref.watch(selectedNodeIdProvider);
+    final testRun = ref.watch(testRunProvider);
     final theme = Theme.of(context);
 
     if (fn == null) {
@@ -540,6 +547,11 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
           overflow: TextOverflow.ellipsis,
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.play_circle_outline),
+            tooltip: '测试运行',
+            onPressed: () => _showTestRunPanel(fn),
+          ),
           IconButton(
             icon: const Icon(Icons.bolt_outlined),
             tooltip: '触发器',
@@ -696,6 +708,7 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
                       _onNodeDragUpdate(node.id, details),
                   onConnectTap: _onNodeConnectTap,
                   isConnectionSource: node.id == _connectSourceNode,
+                  isRunningNode: node.id == testRun.currentNodeId,
                   relatedLabel: _computeRelatedLabel(node, fn),
                 ),
               ),
@@ -892,8 +905,8 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
                 const SizedBox(width: 4),
                 Text(
                   sourceLabel.isEmpty
-                      ? '点击起始节点（连线仅代表执行顺序）'
-                      : '已选起点：$sourceLabel，点击目标节点建立连线',
+                      ? '点击起始节点（出参/无输出节点可作为目标）'
+                      : '已选起点：$sourceLabel，点击目标节点建立连线（出参节点可作为目标）',
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: theme.colorScheme.onTertiaryContainer,
                   ),
@@ -1045,6 +1058,19 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
           ),
         );
       },
+    );
+  }
+
+  /// 打开测试运行面板。
+  ///
+  /// 用户可以设置入参、选择环境（Android / Windows / Web / 自定义），
+  /// 启动测试运行并直观观察当前执行到的节点。
+  void _showTestRunPanel(FunctionDef fn) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) => const TestRunPanel(),
     );
   }
 
