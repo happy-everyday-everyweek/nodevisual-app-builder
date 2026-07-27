@@ -116,6 +116,16 @@ class WindowsBuilder with BuilderUtils implements PlatformBuilder {
 ## v1 状态：Milestone
 本产物为 \`.nvexe\` 包（IR bundle），代表 spec 中"Windows 列后续里程碑"的 v1 占位。
 
+## IR 结构（v1.0 重构）
+\`ir.json\` 采用 v1.0 UI 结构：
+- \`ui\` 为 \`List<UiNode>\` 扁平数组，**Page 作为根节点**（\`type='page'\` 的特殊 UiNode）
+- 每个 [UiNode] 含五段：\`props\` / \`layout\` / \`style\` / \`animations\` / \`triggers\`
+- \`layout\` 为双模布局（9 宫格相对布局 \`relative\` + 绝对布局 \`absolute\`）
+- \`animations\` 支持入场 / 出场 / 触发动画（预设动画 + 关键帧动画）
+- \`triggers\` 映射事件名到函数 id（Page 节点存 onLoad/onDispose 等生命周期触发）
+
+未来 Runner 实现应按此结构渲染 UI（与 Android/Web 运行时对齐）。
+
 ## v1.2 计划
 - 预构建 Flutter Windows 壳可执行文件夹模板（捆绑在 builder 应用 assets）
 - 端侧注入 IR 到壳的运行时配置
@@ -123,7 +133,7 @@ class WindowsBuilder with BuilderUtils implements PlatformBuilder {
 
 ## 包内容
 - \`manifest.json\` - 构建清单
-- \`ir.json\` - 项目 IR
+- \`ir.json\` - 项目 IR（v1.0 UiNode 结构）
 - \`README.md\` - 本文件
 ''';
   }

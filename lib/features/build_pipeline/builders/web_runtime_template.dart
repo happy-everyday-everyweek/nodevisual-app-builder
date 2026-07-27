@@ -414,27 +414,443 @@ class WebRuntimeTemplate {
     }
   }
 
+  // ====== 布局与样式（9宫格堆叠 + 绝对布局 + 样式应用）======
+  //
+  // 以下函数将 UiNode.layout (LayoutConfig) / UiNode.style 映射到 CSS，
+  // 并实现与 Dart 端 RelativeLayoutEngine / AbsoluteLayoutRenderObject 等价的
+  // 9 宫格堆叠算法（cell 1-9 分组 + distance 排序 + 方向堆叠）。
+
+  // SizeSpec → CSS 像素字符串（百分比相对 parentExtent；应用 minPx/maxPx）。
+  function resolveSize(spec, parentExtent) {
+    if (!spec) return "";
+    if (spec.unit === "percent") {
+      var v = (parentExtent || 0) * (spec.value / 100);
+      if (spec.minPx != null) v = Math.max(v, spec.minPx);
+      if (spec.maxPx != null) v = Math.min(v, spec.maxPx);
+      return v + "px";
+    }
+    return spec.value + "px";
+  }
+
+  // EdgeValue → CSS 像素字符串。
+  function resolveEdge(edge, parentExtent) {
+    if (!edge) return "0px";
+    if (edge.unit === "percent") {
+      return ((parentExtent || 0) * (edge.value / 100)) + "px";
+    }
+    return edge.value + "px";
+  }
+
+  // PositionSpec → 像素数值（绝对布局用）。
+  function resolvePosition(spec, parentExtent) {
+    if (!spec) return 0;
+    if (spec.unit === "percent") {
+      return (parentExtent || 0) * (spec.value / 100);
+    }
+    return spec.value;
+  }
+
+  // 应用 LayoutConfig 到元素本身（width/height/margin）。
+  // 位置（cell/distance/x/y）由父容器的堆叠算法计算，此处不设置。
+  function applyLayout(el, uiNode) {
+    var layout = uiNode.layout;
+    if (!layout) return;
+    if (layout.width) el.style.width = resolveSize(layout.width, null);
+    if (layout.height) el.style.height = resolveSize(layout.height, null);
+    if (layout.margin) {
+      el.style.marginTop = resolveEdge(layout.margin.top, null);
+      el.style.marginBottom = resolveEdge(layout.margin.bottom, null);
+      el.style.marginLeft = resolveEdge(layout.margin.left, null);
+      el.style.marginRight = resolveEdge(layout.margin.right, null);
+    }
+  }
+
+  // 应用 UiNode.style（视觉样式 map）到元素。
+  // 识别常见样式键：color / backgroundColor / fontSize / fontWeight /
+  // padding / borderRadius / border / opacity / visibility。
+  function applyStyle(el, uiNode) {
+    var style = uiNode.style;
+    if (!style) return;
+    Object.keys(style).forEach(function(k) {
+      var v = style[k];
+      if (v == null) return;
+      switch (k) {
+        case "color": el.style.color = String(v); break;
+        case "backgroundColor": el.style.backgroundColor = String(v); break;
+        case "fontSize":
+          el.style.fontSize = (typeof v === "number") ? v + "px" : String(v); break;
+        case "fontWeight": el.style.fontWeight = String(v); break;
+        case "fontFamily": el.style.fontFamily = String(v); break;
+        case "padding": el.style.padding = (typeof v === "number") ? v + "px" : String(v); break;
+        case "paddingTop": el.style.paddingTop = (typeof v === "number") ? v + "px" : String(v); break;
+        case "paddingBottom": el.style.paddingBottom = (typeof v === "number") ? v + "px" : String(v); break;
+        case "paddingLeft": el.style.paddingLeft = (typeof v === "number") ? v + "px" : String(v); break;
+        case "paddingRight": el.style.paddingRight = (typeof v === "number") ? v + "px" : String(v); break;
+        case "margin": el.style.margin = (typeof v === "number") ? v + "px" : String(v); break;
+        case "borderRadius": el.style.borderRadius = (typeof v === "number") ? v + "px" : String(v); break;
+        case "border": el.style.border = String(v); break;
+        case "borderWidth": el.style.borderWidth = (typeof v === "number") ? v + "px" : String(v); break;
+        case "borderColor": el.style.borderColor = String(v); break;
+        case "borderStyle": el.style.borderStyle = String(v); break;
+        case "opacity": el.style.opacity = String(v); break;
+        case "visibility": el.style.visibility = String(v); break;
+        case "overflow": el.style.overflow = String(v); break;
+        case "boxShadow": el.style.boxShadow = String(v); break;
+        case "textAlign": el.style.textAlign = String(v); break;
+        case "letterSpacing": el.style.letterSpacing = (typeof v === "number") ? v + "px" : String(v); break;
+        case "lineHeight": el.style.lineHeight = String(v); break;
+        case "minWidth": el.style.minWidth = (typeof v === "number") ? v + "px" : String(v); break;
+        case "maxWidth": el.style.maxWidth = (typeof v === "number") ? v + "px" : String(v); break;
+        case "minHeight": el.style.minHeight = (typeof v === "number") ? v + "px" : String(v); break;
+        case "maxHeight": el.style.maxHeight = (typeof v === "number") ? v + "px" : String(v); break;
+        default:
+          // 未知样式键直接写入（CSS 自定义属性或已知 CSS 属性）。
+          el.style.setProperty(k, String(v));
+      }
+    });
+  }
+
+  // 返回某 cell（1-9）的堆叠信息：flexDirection + 水平/垂直对齐。
+  // 与 Dart 端 RelativeLayoutRenderObject._positionCell 对齐：
+  // - cell 1/2/3: 从顶部往下堆叠（flex-direction: column）
+  // - cell 7/8/9: 从底部往上堆叠（flex-direction: column-reverse）
+  // - cell 4: 从左往右堆叠（flex-direction: row）
+  // - cell 6: 从右往左堆叠（flex-direction: row-reverse）
+  // - cell 5: 中心，默认从上往下堆叠（distance.edge=top 时反向）
+  function getCellStackingInfo(cell) {
+    switch (cell) {
+      case 1: return { flexDirection: "column",  justifyContent: "flex-start", alignItems: "flex-start" };
+      case 2: return { flexDirection: "column",  justifyContent: "flex-start", alignItems: "center" };
+      case 3: return { flexDirection: "column",  justifyContent: "flex-start", alignItems: "flex-end" };
+      case 4: return { flexDirection: "row",     justifyContent: "flex-start", alignItems: "center" };
+      case 5: return { flexDirection: "column",  justifyContent: "center",   alignItems: "center" };
+      case 6: return { flexDirection: "row-reverse", justifyContent: "flex-start", alignItems: "center" };
+      case 7: return { flexDirection: "column-reverse", justifyContent: "flex-start", alignItems: "flex-start" };
+      case 8: return { flexDirection: "column-reverse", justifyContent: "flex-start", alignItems: "center" };
+      case 9: return { flexDirection: "column-reverse", justifyContent: "flex-start", alignItems: "flex-end" };
+      default: return { flexDirection: "column", justifyContent: "center", alignItems: "center" };
+    }
+  }
+
+  // 渲染 9 宫格堆叠布局：父容器作为 grid（3×3），每个 cell 内按堆叠方向排列。
+  // 子组件的 distance.value 作为该 cell 起始边的偏移（margin）。
+  function renderChildrenRelative(parentEl, children) {
+    parentEl.style.position = "relative";
+    parentEl.style.display = "grid";
+    parentEl.style.gridTemplateColumns = "1fr 1fr 1fr";
+    parentEl.style.gridTemplateRows = "1fr 1fr 1fr";
+
+    // 按 cell 分组（默认 cell=5）。
+    var groups = {};
+    children.forEach(function(child) {
+      var cell = (child.layout && child.layout.cell) ? child.layout.cell.cell : 5;
+      if (!groups[cell]) groups[cell] = [];
+      groups[cell].push(child);
+    });
+
+    // 为每个 cell 创建一个容器，按 distance 排序后渲染子组件。
+    Object.keys(groups).forEach(function(cellStr) {
+      var cell = parseInt(cellStr, 10);
+      var cellChildren = groups[cell];
+      // 排序：distance.value 升序（与 Dart 端 sortCellQueue 一致）。
+      cellChildren.sort(function(a, b) {
+        var da = (a.layout && a.layout.distance) ? a.layout.distance.value : 0;
+        var db = (b.layout && b.layout.distance) ? b.layout.distance.value : 0;
+        return da - db;
+      });
+
+      var info = getCellStackingInfo(cell);
+      var cellEl = document.createElement("div");
+      cellEl.style.gridArea = Math.ceil(cell / 3) + " / " + (((cell - 1) % 3) + 1);
+      cellEl.style.display = "flex";
+      cellEl.style.flexDirection = info.flexDirection;
+      cellEl.style.justifyContent = info.justifyContent;
+      cellEl.style.alignItems = info.alignItems;
+      cellEl.style.minHeight = "0";
+      cellEl.style.minWidth = "0";
+
+      // cell 5（中心）特殊：根据首个子组件的 distance.edge 反转方向。
+      if (cell === 5 && cellChildren.length > 0) {
+        var firstEdge = (cellChildren[0].layout && cellChildren[0].layout.distance)
+          ? cellChildren[0].layout.distance.edge : "bottom";
+        if (firstEdge === "top") {
+          cellEl.style.flexDirection = "column-reverse";
+        }
+      }
+
+      cellChildren.forEach(function(child) {
+        // distance.value 作为该 cell 起始边的偏移（margin）。
+        var dist = (child.layout && child.layout.distance) ? child.layout.distance.value : 0;
+        var childEl = renderNode(child, cellEl);
+        if (childEl) {
+          // 根据堆叠方向把 distance 转为 margin（首个子组件的起始偏移）。
+          if (dist > 0) {
+            switch (info.flexDirection) {
+              case "column":       childEl.style.marginTop = dist + "px"; break;
+              case "column-reverse": childEl.style.marginBottom = dist + "px"; break;
+              case "row":          childEl.style.marginLeft = dist + "px"; break;
+              case "row-reverse":  childEl.style.marginRight = dist + "px"; break;
+            }
+          }
+          cellEl.appendChild(childEl);
+        }
+      });
+      parentEl.appendChild(cellEl);
+    });
+  }
+
+  // 渲染绝对布局：父容器 position:relative，子组件 position:absolute。
+  function renderChildrenAbsolute(parentEl, children) {
+    parentEl.style.position = "relative";
+    parentEl.style.display = "block";
+    children.forEach(function(child) {
+      var childEl = renderNode(child, parentEl);
+      if (!childEl) return;
+      var layout = child.layout;
+      if (layout && layout.mode === "absolute") {
+        childEl.style.position = "absolute";
+        if (layout.x) childEl.style.left = resolvePosition(layout.x, parentEl.clientWidth) + "px";
+        if (layout.y) childEl.style.top = resolvePosition(layout.y, parentEl.clientHeight) + "px";
+        if (layout.width) childEl.style.width = resolveSize(layout.width, parentEl.clientWidth);
+        if (layout.height) childEl.style.height = resolveSize(layout.height, parentEl.clientHeight);
+        if (layout.margin) {
+          childEl.style.marginTop = resolveEdge(layout.margin.top, parentEl.clientHeight);
+          childEl.style.marginBottom = resolveEdge(layout.margin.bottom, parentEl.clientHeight);
+          childEl.style.marginLeft = resolveEdge(layout.margin.left, parentEl.clientWidth);
+          childEl.style.marginRight = resolveEdge(layout.margin.right, parentEl.clientWidth);
+        }
+      }
+      parentEl.appendChild(childEl);
+    });
+  }
+
+  // 检测子组件列表是否含有 LayoutConfig（决定布局模式）。
+  function childrenHaveLayout(children) {
+    return (children || []).some(function(c) { return c && c.layout; });
+  }
+
+  // 检测子组件列表中是否含绝对布局节点。
+  function childrenHaveAbsolute(children) {
+    return (children || []).some(function(c) {
+      return c && c.layout && c.layout.mode === "absolute";
+    });
+  }
+
+  // ====== 动画系统（入场 / 触发动画）======
+  //
+  // 将 AnimationSpec 映射为 CSS 动画：
+  // - 预设动画（preset）：fade/slide/scale/bounce/rotate/elastic → CSS @keyframes
+  // - 关键帧动画（keyframes）：动态生成 @keyframes 注入 <style>
+  // - 缓动（easing）：映射到 CSS transition-timing-function / animation-timing-function
+
+  // EasingType → CSS easing 函数。
+  function easingToCss(easing) {
+    switch (easing) {
+      case "linear": return "linear";
+      case "easeIn": return "cubic-bezier(0.42, 0, 1, 1)";
+      case "easeOut": return "cubic-bezier(0, 0, 0.58, 1)";
+      case "easeInOut": return "cubic-bezier(0.42, 0, 0.58, 1)";
+      case "bounce": return "cubic-bezier(0.68, -0.55, 0.265, 1.55)";
+      case "elastic": return "cubic-bezier(0.5, -0.5, 0.1, 1.5)";
+      default: return "ease";
+    }
+  }
+
+  // 预设动画 → CSS @keyframes 定义字符串。
+  // params 可包含 direction（slide 方向：left/right/up/down）。
+  function presetToKeyframes(preset, params) {
+    var p = params || {};
+    switch (preset) {
+      case "fade":
+        return "@keyframes nv-fade { from { opacity: 0; } to { opacity: 1; } }";
+      case "slide": {
+        var dir = p.direction || "up";
+        var from = "translate(0, 0)";
+        switch (dir) {
+          case "left":  from = "translateX(-100%)"; break;
+          case "right": from = "translateX(100%)"; break;
+          case "up":    from = "translateY(100%)"; break;
+          case "down":  from = "translateY(-100%)"; break;
+        }
+        return "@keyframes nv-slide { from { transform: " + from + "; } to { transform: translate(0, 0); } }";
+      }
+      case "scale":
+        return "@keyframes nv-scale { from { transform: scale(0); } to { transform: scale(1); } }";
+      case "bounce":
+        return "@keyframes nv-bounce { 0% { transform: scale(0.3); opacity: 0; } 50% { transform: scale(1.1); opacity: 1; } 70% { transform: scale(0.9); } 100% { transform: scale(1); } }";
+      case "rotate":
+        return "@keyframes nv-rotate { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }";
+      case "elastic":
+        return "@keyframes nv-elastic { 0% { transform: scale(0); } 55% { transform: scale(1.15); } 75% { transform: scale(0.95); } 100% { transform: scale(1); } }";
+      default:
+        return "@keyframes nv-fade { from { opacity: 0; } to { opacity: 1; } }";
+    }
+  }
+
+  // 动画 keyframe 序号计数器（保证每次生成唯一 @keyframes 名）。
+  var _animSeq = 0;
+
+  // 关键帧动画 → 动态生成 @keyframes 注入 <style>，返回动画名。
+  function buildKeyframeAnimation(keyframes) {
+    if (!keyframes || keyframes.length === 0) return null;
+    var name = "nv-kf-" + (++_animSeq);
+    var css = "@keyframes " + name + " {";
+    // 按 time 升序排序（0-1 归一化时间）。
+    var sorted = keyframes.slice().sort(function(a, b) { return a.time - b.time; });
+    sorted.forEach(function(kf) {
+      var pct = Math.max(0, Math.min(100, kf.time * 100));
+      css += pct + "% {";
+      var props = kf.properties || {};
+      if (props.x != null || props.y != null) {
+        css += " transform: translate(" + (props.x || 0) + "px, " + (props.y || 0) + "px);";
+      }
+      if (props.opacity != null) css += " opacity: " + props.opacity + ";";
+      if (props.scale != null) css += " transform: scale(" + props.scale + ");";
+      if (props.rotation != null) css += " transform: rotate(" + props.rotation + "deg);";
+      css += " }";
+    });
+    css += " }";
+    // 注入 <style>。
+    var style = document.createElement("style");
+    style.type = "text/css";
+    style.textContent = css;
+    document.head.appendChild(style);
+    return name;
+  }
+
+  // 播放一个 AnimationSpec：
+  // - 预设动画：注入对应 @keyframes 并应用 animation。
+  // - 关键帧动画：动态生成 @keyframes 并应用 animation。
+  // onComplete 在动画结束时回调（用于出场动画后移除元素）。
+  function playAnimation(el, spec, onComplete) {
+    if (!spec) return;
+    var name = null;
+    if (spec.preset) {
+      // 预设动画：注入 @keyframes（若未注入过）。
+      var styleId = "nv-anim-style-" + spec.preset;
+      if (!document.getElementById(styleId)) {
+        var style = document.createElement("style");
+        style.id = styleId;
+        style.type = "text/css";
+        style.textContent = presetToKeyframes(spec.preset, spec.params);
+        document.head.appendChild(style);
+      }
+      name = "nv-" + spec.preset;
+    } else if (spec.keyframes && spec.keyframes.length > 0) {
+      name = buildKeyframeAnimation(spec.keyframes);
+    }
+    if (!name) return;
+    var duration = (spec.duration || 300);
+    var delay = (spec.delay || 0);
+    var easing = easingToCss(spec.easing);
+    el.style.animation = name + " " + duration + "ms " + easing + " " + delay + "ms 1 normal both";
+    if (onComplete) {
+      var called = false;
+      var handler = function() {
+        if (called) return;
+        called = true;
+        el.removeEventListener("animationend", handler);
+        onComplete();
+      };
+      el.addEventListener("animationend", handler);
+      // 兜底：超时后强制回调（防止 animationend 不触发）。
+      setTimeout(handler, duration + delay + 50);
+    }
+  }
+
+  // 入场动画：组件首次渲染时播放。
+  function applyEntranceAnimation(el, uiNode) {
+    var anims = uiNode.animations;
+    if (!anims || !anims.entrance) return;
+    // 延迟到下一帧播放，确保元素已挂载到 DOM。
+    requestAnimationFrame(function() {
+      playAnimation(el, anims.entrance);
+    });
+  }
+
+  // 触发动画：将 uiNode.animations.triggered 列表绑定到对应事件。
+  // 事件名 → DOM 事件映射：onTap→click, onPress→mousedown, onLongPress→contextmenu 等。
+  function applyTriggeredAnimations(el, uiNode) {
+    var anims = uiNode.animations;
+    if (!anims || !anims.triggered || anims.triggered.length === 0) return;
+    anims.triggered.forEach(function(t) {
+      var domEvt = triggerEventToDom(t.event);
+      if (!domEvt) return;
+      el.addEventListener(domEvt, function() {
+        playAnimation(el, t.animation);
+      });
+    });
+  }
+
+  // UI 事件名 → DOM 事件名映射。
+  function triggerEventToDom(eventName) {
+    switch (eventName) {
+      case "onTap": return "click";
+      case "onPress": return "mousedown";
+      case "onLongPress": return "contextmenu";
+      case "onDoubleTap": return "dblclick";
+      case "onHover": return "mouseenter";
+      case "onFocus": return "focus";
+      case "onBlur": return "blur";
+      case "onChange": return "change";
+      case "onSubmit": return "submit";
+      default: return null;
+    }
+  }
+
   // ====== UI 渲染 ======
   function renderUI() {
     if (!PROJECT || !PROJECT.ui) return;
-    const root = document.getElementById("app-root");
+    var root = document.getElementById("app-root");
     if (!root) return;
     root.innerHTML = "";
     // PROJECT.ui 为 Page 节点数组（type='page'）。每个 Page 节点的 children
     // 为该页面的 UI 根节点树。v1 渲染首页（isHome=true）或首个 Page。
     // 后续页面切换由 SPA 路由处理（待实现）。
-    const pages = Array.isArray(PROJECT.ui)
+    var pages = Array.isArray(PROJECT.ui)
       ? PROJECT.ui.filter(function(n) { return n && n.type === "page"; })
       : [];
     if (pages.length === 0) return;
     var pageNode = pages.find(function(p) { return p.props && p.props.isHome === true; });
     if (!pageNode) pageNode = pages[0];
-    // Page 节点的 children 为该页面的 UI 根节点树；渲染所有根节点。
+
+    // Page 节点本身作为根容器：应用 Page 的 layout（默认 100%×100%）与
+    // 页面级样式（background 等）。
+    var pageStyle = pageNode.props || {};
+    root.style.minHeight = "100vh";
+    if (pageStyle.background) root.style.background = String(pageStyle.background);
+    // safeArea：Web 端通过 padding 模拟（v1 简化）。
+    var padTop = (pageStyle.safeAreaTop !== false) ? "env(safe-area-inset-top)" : "0";
+    var padBottom = (pageStyle.safeAreaBottom !== false) ? "env(safe-area-inset-bottom)" : "0";
+    root.style.paddingTop = padTop;
+    root.style.paddingBottom = padBottom;
+
+    // 渲染 Page 节点的 children 作为 UI 根树。
+    // 若 children 含 LayoutConfig，使用 9 宫格堆叠布局；否则默认流式布局。
     var pageChildren = pageNode.children || [];
-    pageChildren.forEach(function(child) {
-      var el = renderNode(child, null);
-      if (el) root.appendChild(el);
-    });
+    if (childrenHaveAbsolute(pageChildren)) {
+      renderChildrenAbsolute(root, pageChildren);
+    } else if (childrenHaveLayout(pageChildren)) {
+      renderChildrenRelative(root, pageChildren);
+    } else {
+      pageChildren.forEach(function(child) {
+        var el = renderNode(child, null);
+        if (el) root.appendChild(el);
+      });
+    }
+
+    // 触发 Page 节点的 onLoad 事件（triggers.onLoad）。
+    // 使用 triggerPageFunction 而非 triggerFunction，以便 outputs 缓存到
+    // PAGE_FUNC_OUTPUTS 供同页面 UI 组件的 #funcVar 引用按时间线规则解析。
+    if (pageNode.triggers && pageNode.triggers.onLoad) {
+      var onLoadFn = findFunction(pageNode.triggers.onLoad);
+      if (onLoadFn) {
+        setTimeout(function() { triggerPageFunction(onLoadFn); }, 0);
+      } else {
+        // 函数未找到时降级为按 id/name 触发（可能仅记录日志）。
+        setTimeout(function() { triggerFunction(pageNode.triggers.onLoad); }, 0);
+      }
+    }
   }
 
   function renderNode(uiNode, parent) {
@@ -482,8 +898,11 @@ class WebRuntimeTemplate {
       case "button":
         el = document.createElement("button");
         el.textContent = String(uiNode.props.label || "Button");
-        if (uiNode.props.onTap) {
-          el.addEventListener("click", () => triggerFunction(uiNode.props.onTap));
+        // 事件触发：从 uiNode.triggers.onTap 读取函数 id（新结构），
+        // 向后兼容旧 props.onTap（旧 IR）。
+        var onTapFn = (uiNode.triggers && uiNode.triggers.onTap) || uiNode.props.onTap;
+        if (onTapFn) {
+          el.addEventListener("click", function() { triggerFunction(onTapFn); });
         }
         break;
       case "TextField":
@@ -516,11 +935,14 @@ class WebRuntimeTemplate {
         el.value = sVal;
         // 滑块当前值作为组件上下文提供给子节点 #value 引用。
         el._componentContext = { componentId: uiNode.id, fields: { value: sVal } };
-        if (uiNode.props.onChanged) {
-          el.addEventListener("input", () => {
+        // onChanged 触发：优先从 uiNode.triggers 读取（新结构），
+        // 向后兼容 uiNode.props.onChanged（旧 IR）。
+        var onChangedFn = (uiNode.triggers && uiNode.triggers.onChanged) || uiNode.props.onChanged;
+        if (onChangedFn) {
+          el.addEventListener("input", function() {
             const v = Number(el.value);
             if (el._componentContext) el._componentContext.fields.value = v;
-            triggerFunction(uiNode.props.onChanged);
+            triggerFunction(onChangedFn);
           });
         }
         break;
@@ -651,6 +1073,11 @@ class WebRuntimeTemplate {
     }
     el.setAttribute("data-ui-id", uiNode.id || "");
 
+    // 应用 LayoutConfig（width/height/margin；位置由父容器布局算法计算）。
+    applyLayout(el, uiNode);
+    // 应用 UiNode.style（视觉样式 map）。
+    applyStyle(el, uiNode);
+
     // 应用静态 props
     if (uiNode.props) {
       Object.keys(uiNode.props).forEach(k => {
@@ -664,25 +1091,39 @@ class WebRuntimeTemplate {
       applyBindings(el, uiNode);
     }
 
-    // 触发点：加载时
-    if (uiNode.props && uiNode.props.onLoad) {
-      setTimeout(() => triggerFunction(uiNode.props.onLoad), 0);
+    // 触发点：加载时（优先从 uiNode.triggers.onLoad 读取，兼容旧 props.onLoad）。
+    var onLoadFn = (uiNode.triggers && uiNode.triggers.onLoad) || (uiNode.props && uiNode.props.onLoad);
+    if (onLoadFn) {
+      setTimeout(function() { triggerFunction(onLoadFn); }, 0);
     }
+
+    // 入场动画：组件首次渲染时播放（applyEntranceAnimation 内部已延迟到下一帧）。
+    applyEntranceAnimation(el, uiNode);
+    // 触发动画：将 uiNode.animations.triggered 绑定到对应 DOM 事件。
+    applyTriggeredAnimations(el, uiNode);
 
     // 子节点 / 容器组件渲染
     if (el._isListComponent) {
       renderListChildren(el, uiNode);
     } else if (el._isTabComponent) {
       renderTabChildren(el, uiNode);
-    } else if (uiNode.children) {
+    } else if (uiNode.children && uiNode.children.length > 0) {
       // 容器组件（slider/switch）向子节点注入组件上下文。
       if (el._componentContext) {
         pushComponentContext(el._componentContext);
       }
-      uiNode.children.forEach(child => {
-        const childEl = renderNode(child, el);
-        if (childEl) el.appendChild(childEl);
-      });
+      // 子组件布局：若含 LayoutConfig，使用 9 宫格堆叠或绝对布局；
+      // 否则沿用默认流式布局（flex）。
+      if (childrenHaveAbsolute(uiNode.children)) {
+        renderChildrenAbsolute(el, uiNode.children);
+      } else if (childrenHaveLayout(uiNode.children)) {
+        renderChildrenRelative(el, uiNode.children);
+      } else {
+        uiNode.children.forEach(function(child) {
+          var childEl = renderNode(child, el);
+          if (childEl) el.appendChild(childEl);
+        });
+      }
       if (el._componentContext) {
         popComponentContext();
       }

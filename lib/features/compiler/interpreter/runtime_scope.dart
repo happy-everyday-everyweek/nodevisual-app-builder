@@ -65,6 +65,20 @@ class PageFuncEntry {
 ///   供同页面 UI 组件的 `#funcVar` 引用按时间线规则解析。
 /// - [inputs]：函数入参（按名传入，合并到 [funcVars] 前的原始副本）。
 ///
+/// **Page 作为根节点（Phase 7 适配）**：
+/// 新版 [Project.ui] 为 `List<UiNode>`，每个元素是 type='page' 的 Page 节点。
+/// Page 节点的 id 即为页面 id，用于：
+/// - [PageLifecycleManager.onPageEnter] 等 API 的 pageId 参数；
+/// - 函数入口 [FunctionEntry] 的 pageEvent ref `<pageId>:<event>` 中的 pageId；
+/// - [pageFuncOutputs] 缓存的归属（页面卸载时 [clearPageFuncOutputs]）。
+///
+/// **页面作用域函数变量机制保留**：
+/// 页面 onLoad 函数的 outputs 通过 [setPageFuncEntry] 缓存到 [pageFuncOutputs]，
+/// 同页面 UI 组件的 `#funcVar` 引用按 [PageFuncEntry.state] 状态机解析：
+/// - `done` → 返回缓存值（就绪）；
+/// - `running` / `idle` / `error` → 返回加载态占位（详见 [BindingResolver]）。
+/// 页面卸载时调用 [clearPageFuncOutputs] 清空缓存，确保跨页面不串扰。
+///
 /// 循环体内执行共享同一 [RuntimeScope]（不创建新作用域），以保证 loop 节点
 /// 的 `index` 输出对 body 子图可见；函数调用（function_call）则通过
 /// [NodeInterpreter.runFunction] 创建新的 [RuntimeScope] 实现隔离。
@@ -91,6 +105,7 @@ class RuntimeScope {
   ///
   /// UI 渲染层在页面 onLoad 时执行函数并写入此缓存；同页面 UI 组件的
   /// `#funcVar` 引用按 [PageFuncEntry.state] 决定返回值或加载态占位。
+  /// 页面 id 取自 Page 节点（type='page'）的 [UiNode.id]。
   final Map<String, PageFuncEntry> pageFuncOutputs = {};
 
   /// 读取节点数据输出。
@@ -141,6 +156,9 @@ class RuntimeScope {
   }
 
   /// 清除页面级函数缓存（页面卸载时调用）。
+  ///
+  /// Page 节点（type='page'）卸载时由 [PageLifecycleManager.onPageLeave]
+  /// 调用，确保下一页面的函数 outputs 不会串扰到当前页面。
   void clearPageFuncOutputs() {
     pageFuncOutputs.clear();
   }
