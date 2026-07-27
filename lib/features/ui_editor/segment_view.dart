@@ -80,12 +80,17 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
   // ---- 顶部标题栏 ----
 
   Widget _buildHeader(ThemeData theme) {
-    // Tab 名称"UI"已在顶部 CapsuleTopBar 指明，这里仅保留宽屏折叠按钮，避免重复。
+    // Tab 名称"UI"已在顶部 CapsuleTopBar 指明，这里保留宽屏折叠按钮与全屏预览按钮。
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 4, 8, 4),
       child: Row(
         children: [
           const Spacer(),
+          IconButton(
+            onPressed: () => _showFullscreenPreview(),
+            icon: const Icon(Icons.fullscreen),
+            tooltip: '全屏预览',
+          ),
           if (_isWide)
             IconButton(
               onPressed: () =>
@@ -276,7 +281,11 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
 
   /// 递归渲染 UiNode 为真实 Widget（所见即所得）。
   Widget _renderNode(ThemeData theme, UiNode node, String? selectedId) {
-    final content = _buildNodeContent(theme, node, selectedId);
+    final content = _buildNodeContent(
+      theme,
+      node,
+      (t, c) => _renderNode(t, c, selectedId),
+    );
     return _SelectionWrapper(
       nodeId: node.id,
       selected: node.id == selectedId,
@@ -287,7 +296,16 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
     );
   }
 
-  Widget _buildNodeContent(ThemeData theme, UiNode node, String? selectedId) {
+  /// 全屏预览模式递归渲染 UiNode（不带选择器与编辑器提示）。
+  Widget _buildPreviewNode(ThemeData theme, UiNode node) {
+    return _buildNodeContent(theme, node, _buildPreviewNode);
+  }
+
+  Widget _buildNodeContent(
+    ThemeData theme,
+    UiNode node,
+    Widget Function(ThemeData, UiNode) renderChild,
+  ) {
     switch (node.type) {
       case 'column':
         return IntrinsicHeight(
@@ -297,7 +315,7 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
             crossAxisAlignment:
                 _parseCrossAxis(node.props['crossAxisAlignment']),
             children: node.children
-                .map((c) => _renderNode(theme, c, selectedId))
+                .map((c) => renderChild(theme, c))
                 .toList(growable: false),
           ),
         );
@@ -309,7 +327,7 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
             crossAxisAlignment:
                 _parseCrossAxis(node.props['crossAxisAlignment']),
             children: node.children
-                .map((c) => _renderNode(theme, c, selectedId))
+                .map((c) => renderChild(theme, c))
                 .toList(growable: false),
           ),
         );
@@ -354,7 +372,7 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
               : ListView(
                   shrinkWrap: true,
                   children: node.children
-                      .map((c) => _renderNode(theme, c, selectedId))
+                      .map((c) => renderChild(theme, c))
                       .toList(growable: false),
                 ),
         );
@@ -386,7 +404,7 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: node.children
-                      .map((c) => _renderNode(theme, c, selectedId))
+                      .map((c) => renderChild(theme, c))
                       .toList(growable: false),
                 ),
         );
@@ -404,7 +422,7 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: node.children
-                      .map((c) => _renderNode(theme, c, selectedId))
+                      .map((c) => renderChild(theme, c))
                       .toList(growable: false),
                 ),
         );
@@ -507,7 +525,7 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
               : ListView(
                   shrinkWrap: true,
                   children: node.children
-                      .map((c) => _renderNode(theme, c, selectedId))
+                      .map((c) => renderChild(theme, c))
                       .toList(growable: false),
                 ),
         );
@@ -524,7 +542,7 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
                   scrollDirection: Axis.horizontal,
                   shrinkWrap: true,
                   children: node.children
-                      .map((c) => _renderNode(theme, c, selectedId))
+                      .map((c) => renderChild(theme, c))
                       .toList(growable: false),
                 ),
         );
@@ -562,7 +580,7 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
                 Expanded(
                   child: TabBarView(
                     children: node.children
-                        .map((c) => _renderNode(theme, c, selectedId))
+                        .map((c) => renderChild(theme, c))
                         .toList(growable: false),
                   ),
                 ),
@@ -582,7 +600,7 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: node.children
-                        .map((c) => _renderNode(theme, c, selectedId))
+                        .map((c) => renderChild(theme, c))
                         .toList(growable: false),
                   ),
           ),
@@ -653,7 +671,7 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
               ),
               const SizedBox(height: 6),
               if (matched != null)
-                _renderNode(theme, matched, selectedId)
+                renderChild(theme, matched)
               else
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 8),
@@ -760,6 +778,59 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
       case VariableSource.device:
         return '{device:${DeviceProperty.labelOf(r.property ?? '')}}';
     }
+  }
+
+  // ---- 全屏预览 ----
+
+  /// 打开全屏 UI 预览，移除编辑器面板、选中框与 FAB 等控件，
+  /// 以接近生产环境的样式展示当前项目 UI。
+  void _showFullscreenPreview() {
+    final project = ref.read(uiMutatorProvider);
+    if (project == null) return;
+    showDialog<void>(
+      context: context,
+      useSafeArea: false,
+      builder: (ctx) {
+        final theme = Theme.of(ctx);
+        return Dialog.fullscreen(
+          child: Scaffold(
+            appBar: AppBar(
+              leading: IconButton(
+                icon: const Icon(Icons.close),
+                tooltip: '关闭预览',
+                onPressed: () => Navigator.pop(ctx),
+              ),
+              title: const Text('UI 全屏预览'),
+              actions: [
+                IconButton(
+                  icon: const Icon(Icons.fullscreen_exit),
+                  tooltip: '退出全屏',
+                  onPressed: () => Navigator.pop(ctx),
+                ),
+              ],
+            ),
+            body: project.ui.isEmpty
+                ? Center(
+                    child: Text(
+                      '画布为空，无内容可预览',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  )
+                : SingleChildScrollView(
+                    padding: const EdgeInsets.all(16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: project.ui
+                          .map((n) => _buildPreviewNode(theme, n))
+                          .toList(growable: false),
+                    ),
+                  ),
+          ),
+        );
+      },
+    );
   }
 
   // ---- 添加组件 ----

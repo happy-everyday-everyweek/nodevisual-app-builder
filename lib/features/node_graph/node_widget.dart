@@ -47,6 +47,7 @@ class NodeCard extends StatefulWidget {
     this.onDragUpdate,
     this.onConnectTap,
     this.isConnectionSource = false,
+    this.isRunningNode = false,
     this.relatedLabel,
   });
 
@@ -78,6 +79,9 @@ class NodeCard extends StatefulWidget {
 
   /// 连线模式下是否为当前选中的起始节点（高亮）。
   final bool isConnectionSource;
+
+  /// 测试运行中是否为当前执行到的节点（高亮）。
+  final bool isRunningNode;
 
   /// 子母节点关联标签（由父组件计算传入，如"属于: if判断"或"分支: 则、否则"）。
   final String? relatedLabel;
@@ -148,11 +152,13 @@ class _NodeCardState extends State<NodeCard>
     final isConnect = widget.mode == NodeEditorMode.connect;
     final isSource = widget.isConnectionSource;
 
-    // 连线模式下：起始节点用 tertiary；其余用 outline（选中态用 primary）。
+    // 连线模式下：起始节点用 tertiary；运行中节点用 error；选中态用 primary；其余 outline。
     final borderColor = isSource
         ? cs.tertiary
-        : (widget.selected ? cs.primary : cs.outlineVariant);
-    final borderWidth = isSource || widget.selected ? 1.5 : 1;
+        : widget.isRunningNode
+            ? cs.error
+            : (widget.selected ? cs.primary : cs.outlineVariant);
+    final borderWidth = isSource || widget.isRunningNode || widget.selected ? 2.0 : 1;
 
     return ScaleTransition(
       scale: Tween<double>(begin: 0.96, end: 1.0).animate(_appearAnim),

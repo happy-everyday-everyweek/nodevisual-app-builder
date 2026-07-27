@@ -32,6 +32,7 @@ class NodeInterpreter implements InterpreterHost {
     this.dbExecutor,
     this.pluginConfigStorage,
     this.uiState,
+    this.onNodeEnter,
   });
 
   /// 所属项目（用于 function_call 查找目标函数、db 节点读取 schema）。
@@ -48,6 +49,9 @@ class NodeInterpreter implements InterpreterHost {
 
   /// 运行时 UI 状态覆盖层，可空（为空时 ui_* 节点写入被忽略，不抛错）。
   final RuntimeUiState? uiState;
+
+  /// 节点进入回调（测试运行高亮当前节点用）。
+  final void Function(String nodeId)? onNodeEnter;
 
   /// db schema 是否已确保（幂等，避免每次 runFunction 重复建表）。
   bool _schemaEnsured = false;
@@ -108,6 +112,7 @@ class NodeInterpreter implements InterpreterHost {
       if (steps++ > maxSteps) {
         return const RunResult(error: '执行步数超过上限 $maxSteps，疑似死循环');
       }
+      onNodeEnter?.call(currentId);
       // 查找当前节点。
       Node? node;
       for (final n in function.nodes) {
