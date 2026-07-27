@@ -25,6 +25,13 @@ class UiNodeSearchResult {
 /// 当前选中的 UI 节点 id（null 表示未选中，仅画布层 UI 状态，不持久化）。
 final selectedUiNodeIdProvider = StateProvider<String?>((ref) => null);
 
+/// 当前选中的 Page 节点 id（仅画布层 UI 状态，不持久化）。
+///
+/// Phase 4 v2 引入：UI 编辑器主视图聚焦单一 Page 渲染，
+/// 此处记录当前画布正在编辑的 Page 节点 id（应为 [Project.ui] 中 type=='page' 的节点）。
+/// null 表示尚未选择任何页面（无 Page 时画布显示引导提示）。
+final selectedPageIdProvider = StateProvider<String?>((ref) => null);
+
 /// UI 段变更器：管理 [Project.ui] 树 + 组件触发点绑定 + 定时器 entry。
 ///
 /// state 始终镜像 [projectMutatorProvider]（在 [build] 中 watch），
@@ -251,6 +258,50 @@ class UiMutator extends Notifier<Project?> {
     if (p == null) return;
     final newUi = p.ui
         .map((r) => _updateNode(r, id, (n) => n.copyWith(layout: layout)))
+        .toList(growable: false);
+    _commit(p.copyWith(ui: newUi));
+  }
+
+  /// 更新单个样式键值（写入 [UiNode.style]）。
+  ///
+  /// 供 Phase 4 v2 样式段编辑器使用：value 为 null 时移除该样式键。
+  void updateStyleProp(String id, String key, Object? value) {
+    final p = _project;
+    if (p == null) return;
+    final newUi = p.ui
+        .map((r) => _updateNode(r, id, (n) {
+              final newStyle = Map<String, dynamic>.from(n.style);
+              if (value == null) {
+                newStyle.remove(key);
+              } else {
+                newStyle[key] = value;
+              }
+              return n.copyWith(style: newStyle);
+            }),)
+        .toList(growable: false);
+    _commit(p.copyWith(ui: newUi));
+  }
+
+  /// 整体替换节点样式（合并）。
+  void updateStyle(String id, Map<String, dynamic> style) {
+    final p = _project;
+    if (p == null) return;
+    final newUi = p.ui
+        .map((r) => _updateNode(r, id,
+            (n) => n.copyWith(style: {...n.style, ...style}),),)
+        .toList(growable: false);
+    _commit(p.copyWith(ui: newUi));
+  }
+
+  /// 更新节点动画配置；animations 为 null 时清除动画。
+  ///
+  /// 供 Phase 4 v2 样式段内的动画配置区使用。
+  void updateAnimations(String id, AnimationsConfig? animations) {
+    final p = _project;
+    if (p == null) return;
+    final newUi = p.ui
+        .map((r) =>
+            _updateNode(r, id, (n) => n.copyWith(animations: animations)),)
         .toList(growable: false);
     _commit(p.copyWith(ui: newUi));
   }

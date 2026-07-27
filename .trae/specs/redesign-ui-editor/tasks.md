@@ -2,36 +2,36 @@
 
 ## 阶段 0：版本隔离与基础准备
 
-- [ ] Task 0.1: 归档 0.x 代码到 legacy/v0 分支
-  - [ ] SubTask 0.1.1: 在 main 分支创建 git tag v0-final 标记最后提交
-  - [ ] SubTask 0.1.2: 创建 legacy/v0 分支并推送
-  - [ ] SubTask 0.1.3: 在 main 分支将 pubspec.yaml 版本号升至 1.0.0
-  - [ ] SubTask 0.1.4: 创建新空目录 lib/features/ui_editor/（清空旧 segment_view.dart 等待重写）
+- [x] Task 0.1: 归档 0.x 代码到 legacy/v0 分支
+  - [x] SubTask 0.1.1: 在 main 分支创建 git tag v0-final 标记最后提交
+  - [x] SubTask 0.1.2: 创建 legacy/v0 分支并推送
+  - [x] SubTask 0.1.3: 在 main 分支将 pubspec.yaml 版本号升至 1.0.0
+  - [x] SubTask 0.1.4: 创建新空目录 lib/features/ui_editor/（清空旧 segment_view.dart 等待重写）
 
 ## 阶段 1：数据模型重构
 
-- [ ] Task 1.1: 重构 UiNode 数据模型
-  - [ ] SubTask 1.1.1: 定义 LayoutConfig 类（mode/cell/distance/x/y/width/height/margin）
-  - [ ] SubTask 1.1.2: 定义 SizeSpec 类（value/unit/minPx/maxPx）
-  - [ ] SubTask 1.1.3: 定义 MarginSpec 类（top/bottom/left/right，各含 value+unit）
-  - [ ] SubTask 1.1.4: 定义 DistanceSpec 类（edge/value/unit）
-  - [ ] SubTask 1.1.5: 定义 AnimationsConfig 类（entrance/exit/triggered[]）
-  - [ ] SubTask 1.1.6: 定义 AnimationSpec 类（preset 或 keyframes、duration/delay/easing）
-  - [ ] SubTask 1.1.7: 定义 Keyframe 类（time/properties/easing）
-  - [ ] SubTask 1.1.8: 重构 UiNode 类，新增 layout/style/animations 字段，移除 props 中布局字段
-  - [ ] SubTask 1.1.9: 实现新 UiNode 的 toJson/fromJson（向后不兼容）
-- [ ] Task 1.2: 重构 Page 数据模型为特殊 UiNode
-  - [ ] SubTask 1.2.1: Page 继承/组合 UiNode，type='page'
-  - [ ] SubTask 1.2.2: Page 特有 props：name/route/isHome/背景/安全区/转场动画
-  - [ ] SubTask 1.2.3: Page 的 layout 固定为填充屏幕（width=100%, height=100%）
-  - [ ] SubTask 1.2.4: 实现 Page 的 toJson/fromJson
-- [ ] Task 1.3: 重构 Project.ui 结构
-  - [ ] SubTask 1.3.1: Project.ui 改为 List<Page>（Page 作为根节点）
-  - [ ] SubTask 1.3.2: 所有组件必须挂载在某 Page 下（pageId 必填）
-  - [ ] SubTask 1.3.3: 更新 Project 的 toJson/fromJson
-- [ ] Task 1.4: 更新 IR 序列化与校验
-  - [ ] SubTask 1.4.1: 更新 ir_serializer.dart 适配新结构
-  - [ ] SubTask 1.4.2: 更新 ir_validator.dart 适配新结构（强制 pageId 校验等）
+- [x] Task 1.1: 重构 UiNode 数据模型
+  - [x] SubTask 1.1.1: 定义 LayoutConfig 类（mode/cell/distance/x/y/width/height/margin）
+  - [x] SubTask 1.1.2: 定义 SizeSpec 类（value/unit/minPx/maxPx）
+  - [x] SubTask 1.1.3: 定义 MarginSpec 类（top/bottom/left/right，各含 value+unit）
+  - [x] SubTask 1.1.4: 定义 DistanceSpec 类（edge/value/unit）
+  - [x] SubTask 1.1.5: 定义 AnimationsConfig 类（entrance/exit/triggered[]）
+  - [x] SubTask 1.1.6: 定义 AnimationSpec 类（preset 或 keyframes、duration/delay/easing）
+  - [x] SubTask 1.1.7: 定义 Keyframe 类（time/properties/easing）
+  - [x] SubTask 1.1.8: 重构 UiNode 类，新增 layout/style/animations 字段，移除 props 中布局字段
+  - [x] SubTask 1.1.9: 实现新 UiNode 的 toJson/fromJson（向后不兼容）
+- [x] Task 1.2: 重构 Page 数据模型为特殊 UiNode
+  - [x] SubTask 1.2.1: Page 继承/组合 UiNode，type='page'
+  - [x] SubTask 1.2.2: Page 特有 props：name/route/isHome/背景/安全区/转场动画
+  - [x] SubTask 1.2.3: Page 的 layout 固定为填充屏幕（width=100%, height=100%）
+  - [x] SubTask 1.2.4: 实现 Page 的 toJson/fromJson
+- [x] Task 1.3: 重构 Project.ui 结构
+  - [x] SubTask 1.3.1: Project.ui 改为 List<Page>（Page 作为根节点）
+  - [x] SubTask 1.3.2: 所有组件必须挂载在某 Page 下（pageId 必填）
+  - [x] SubTask 1.3.3: 更新 Project 的 toJson/fromJson
+- [x] Task 1.4: 更新 IR 序列化与校验
+  - [x] SubTask 1.4.1: 更新 ir_serializer.dart 适配新结构
+  - [x] SubTask 1.4.2: 更新 ir_validator.dart 适配新结构（强制 pageId 校验等）
 
 ## 阶段 2：布局系统实现
 
