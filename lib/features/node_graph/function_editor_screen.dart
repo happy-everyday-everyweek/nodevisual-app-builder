@@ -609,6 +609,7 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
                     portPositions,
                     selectedNodeId,
                     theme,
+                    testRun,
                   ),
                 ),
                 // 添加模式下展开节点面板（位于胶囊工具栏上方）。
@@ -647,6 +648,7 @@ class _FunctionEditorScreenState extends ConsumerState<FunctionEditorScreen> {
     Map<String, Offset> portPositions,
     String? selectedNodeId,
     ThemeData theme,
+    TestRunState testRun,
   ) {
     return InteractiveViewer(
       key: _viewerKey,
