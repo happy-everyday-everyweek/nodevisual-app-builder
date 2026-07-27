@@ -174,7 +174,7 @@ class AndroidBuilder with BuilderUtils implements PlatformBuilder {
 - **relative（9 宫格相对布局）**：使用 \`cell\`（1-9 宫格归属）+ \`distance\`（距最近边）定位。
   - cell 1/2/3 从顶部往下堆叠；7/8/9 从底部往上堆叠
   - cell 4 从左往右堆叠；6 从右往左堆叠；cell 5 中心堆叠
-  - 同 cell 内按 \`distance.value\` 升序排列
+  - 同 cell 内按 \`children\` 列表顺序堆叠（不按 \`distance.value\` 排序）
 - **absolute（绝对布局）**：使用 \`x\` / \`y\` 坐标定位（支持百分比 / 像素）
 
 两种模式下 \`width\` / \`height\` 必填（[SizeSpec] 支持百分比 + minPx/maxPx 约束），

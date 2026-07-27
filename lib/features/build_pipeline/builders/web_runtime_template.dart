@@ -548,16 +548,10 @@ class WebRuntimeTemplate {
       groups[cell].push(child);
     });
 
-    // 为每个 cell 创建一个容器，按 distance 排序后渲染子组件。
+    // 为每个 cell 创建一个容器，按 children 列表顺序渲染子组件（不按 distance 排序）。
     Object.keys(groups).forEach(function(cellStr) {
       var cell = parseInt(cellStr, 10);
       var cellChildren = groups[cell];
-      // 排序：distance.value 升序（与 Dart 端 sortCellQueue 一致）。
-      cellChildren.sort(function(a, b) {
-        var da = (a.layout && a.layout.distance) ? a.layout.distance.value : 0;
-        var db = (b.layout && b.layout.distance) ? b.layout.distance.value : 0;
-        return da - db;
-      });
 
       var info = getCellStackingInfo(cell);
       var cellEl = document.createElement("div");
