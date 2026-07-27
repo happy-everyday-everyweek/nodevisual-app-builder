@@ -320,7 +320,7 @@ class DistanceSpec {
   const DistanceSpec({
     required this.edge,
     required this.value,
-    this.unit = SizeUnit.px,
+    this.unit = SizeUnit.percent,
   });
 
   DistanceSpec copyWith({
@@ -354,7 +354,9 @@ class DistanceSpec {
   factory DistanceSpec.fromJson(Map<String, dynamic> json) => DistanceSpec(
         edge: DistanceEdge.fromJson(json['edge']),
         value: (json['value'] as num).toDouble(),
-        unit: SizeUnit.fromJson(json['unit']),
+        unit: json['unit'] == null
+            ? SizeUnit.percent
+            : SizeUnit.fromJson(json['unit']),
       );
 
   @override
@@ -368,7 +370,7 @@ class PositionSpec {
 
   const PositionSpec({
     required this.value,
-    this.unit = SizeUnit.px,
+    this.unit = SizeUnit.percent,
   });
 
   PositionSpec copyWith({
@@ -395,7 +397,9 @@ class PositionSpec {
 
   factory PositionSpec.fromJson(Map<String, dynamic> json) => PositionSpec(
         value: (json['value'] as num).toDouble(),
-        unit: SizeUnit.fromJson(json['unit']),
+        unit: json['unit'] == null
+            ? SizeUnit.percent
+            : SizeUnit.fromJson(json['unit']),
       );
 
   @override

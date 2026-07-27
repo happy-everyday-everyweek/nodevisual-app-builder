@@ -176,6 +176,29 @@ class LayoutPanel extends ConsumerWidget {
             const SizedBox(width: 8),
             Expanded(
               flex: 2,
+              child: _UnitDropdown<SizeUnit>(
+                label: '单位',
+                value: layout.distance?.unit ?? SizeUnit.percent,
+                items: const [
+                  (SizeUnit.px, 'px'),
+                  (SizeUnit.percent, '%'),
+                ],
+                onChanged: (unit) => _commit(
+                  ref,
+                  layout.copyWith(
+                    distance: (layout.distance ??
+                            const DistanceSpec(
+                              edge: DistanceEdge.top,
+                              value: 0,
+                            ))
+                        .copyWith(unit: unit),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              flex: 2,
               child: _UnitDropdown<DistanceEdge>(
                 label: '方向',
                 value: layout.distance?.edge ?? DistanceEdge.top,
@@ -240,7 +263,7 @@ class LayoutPanel extends ConsumerWidget {
               width: 84,
               child: _UnitDropdown<SizeUnit>(
                 label: '单位',
-                value: layout.x?.unit ?? SizeUnit.px,
+                value: layout.x?.unit ?? SizeUnit.percent,
                 items: const [
                   (SizeUnit.px, 'px'),
                   (SizeUnit.percent, '%'),
@@ -274,7 +297,7 @@ class LayoutPanel extends ConsumerWidget {
               width: 84,
               child: _UnitDropdown<SizeUnit>(
                 label: '单位',
-                value: layout.y?.unit ?? SizeUnit.px,
+                value: layout.y?.unit ?? SizeUnit.percent,
                 items: const [
                   (SizeUnit.px, 'px'),
                   (SizeUnit.percent, '%'),

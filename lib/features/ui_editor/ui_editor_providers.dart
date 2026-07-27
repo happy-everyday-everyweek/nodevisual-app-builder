@@ -192,6 +192,10 @@ class UiMutator extends Notifier<Project?> {
       if (parent == null) {
         throw ArgumentError.value(parentId, 'parentId', 'parentId 不存在');
       }
+      // 防御：不允许在 Page 下嵌套另一个 Page（Page 只能作为顶层根节点）。
+      if (parent.node.isPage && type == kPageType) {
+        throw StateError('不允许在 Page 下嵌套另一个 Page');
+      }
       // 继承父组件的 pageId：父为 Page 节点时取父 id，否则取父节点 pageId。
       // 历史数据（父节点无 pageId）回退到传入的 [pageId]（已校验存在）。
       final inherited =
@@ -329,6 +333,10 @@ class UiMutator extends Notifier<Project?> {
     final found = findNode(id);
     if (found == null) return;
     final moving = found.node;
+    // 防御：Page 节点不允许被移动（Page 只能作为 UI 树顶层根节点）。
+    if (moving.isPage) {
+      throw StateError('Page 节点不允许被移动');
+    }
     // 从原位置移除。
     var newUi = p.ui
         .map((r) => _removeFromTree(r, id))

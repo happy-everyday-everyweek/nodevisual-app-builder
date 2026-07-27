@@ -32,6 +32,12 @@ class PagePropsKeys {
 
   /// 是否启用底部安全区域。
   static const String safeAreaBottom = 'safeAreaBottom';
+
+  /// 页面转场动画类型（none/fade/slide/scale 等）。
+  static const String transition = 'transition';
+
+  /// 页面转场动画时长（毫秒）。
+  static const String transitionDuration = 'transitionDuration';
 }
 
 /// Page 生命周期事件名（存储在 [UiNode.triggers] 中，值为函数 id）。
@@ -85,6 +91,15 @@ extension PageNodeExtension on UiNode {
   /// 是否启用底部安全区域（仅 Page 节点有效；默认 true）。
   bool get pageSafeAreaBottom =>
       isPage ? (props[PagePropsKeys.safeAreaBottom] as bool?) ?? true : true;
+
+  /// 页面转场动画类型（仅 Page 节点有效；默认 none）。
+  String get pageTransition =>
+      isPage ? (props[PagePropsKeys.transition] as String?) ?? 'none' : 'none';
+
+  /// 页面转场动画时长毫秒（仅 Page 节点有效；默认 300）。
+  double get pageTransitionDuration => isPage
+      ? (props[PagePropsKeys.transitionDuration] as num?)?.toDouble() ?? 300
+      : 300;
 
   /// 该 Page 绑定的生命周期事件 → 函数 id 映射（仅 Page 节点有效）。
   ///

@@ -25,6 +25,8 @@ dependencies:
   flutter_js: ^0.8.1
   dart_openai: ^5.1.0
   url_launcher: ^6.3.0
+  fl_chart: ^0.69.0
+  lucide_icons: ^0.257.0
 
 dev_dependencies:
   flutter_test:

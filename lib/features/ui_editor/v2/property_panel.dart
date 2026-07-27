@@ -89,16 +89,16 @@ class PropertyPanel extends ConsumerWidget {
               : LayoutPanel(nodeId: node.id),
         ),
         const SizedBox(height: 8),
-        // 3. 样式段（仅普通组件，Page 无样式段）
-        if (!isPage) ...[
-          _CollapsibleSection(
-            title: '样式',
-            icon: Icons.palette_outlined,
-            initiallyExpanded: false,
-            child: StyleSection(node: node),
-          ),
-          const SizedBox(height: 8),
-        ],
+        // 3. 样式段（普通组件用 StyleSection，Page 用页面级样式编辑器）
+        _CollapsibleSection(
+          title: '样式',
+          icon: Icons.palette_outlined,
+          initiallyExpanded: false,
+          child: isPage
+              ? _PageStyleEditor(node: node)
+              : StyleSection(node: node),
+        ),
+        const SizedBox(height: 8),
         // 4. 触发段
         _CollapsibleSection(
           title: isPage ? '页面生命周期' : '触发事件',
@@ -320,6 +320,223 @@ class _PageParamsEditorState extends ConsumerState<_PageParamsEditor> {
         ),
       ],
     );
+  }
+}
+
+/// Page 样式段编辑器：页面级视觉样式（背景色、转场动画）。
+///
+/// 简化的样式编辑器，仅包含 Page 特有的视觉样式：
+/// - 背景颜色（hex 输入 + 预设色板）
+/// - 转场动画类型（none/fade/slide/scale）+ 时长
+class _PageStyleEditor extends ConsumerStatefulWidget {
+  const _PageStyleEditor({required this.node});
+
+  final UiNode node;
+
+  @override
+  ConsumerState<_PageStyleEditor> createState() => _PageStyleEditorState();
+}
+
+class _PageStyleEditorState extends ConsumerState<_PageStyleEditor> {
+  late final TextEditingController _background;
+  late final TextEditingController _duration;
+
+  @override
+  void initState() {
+    super.initState();
+    _background =
+        TextEditingController(text: widget.node.pageBackground ?? '');
+    _duration = TextEditingController(
+        text: '${widget.node.pageTransitionDuration.round()}');
+  }
+
+  @override
+  void didUpdateWidget(covariant _PageStyleEditor oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final bg = widget.node.pageBackground ?? '';
+    if (_background.text != bg) _background.text = bg;
+    final d = '${widget.node.pageTransitionDuration.round()}';
+    if (_duration.text != d) _duration.text = d;
+  }
+
+  @override
+  void dispose() {
+    _background.dispose();
+    _duration.dispose();
+    super.dispose();
+  }
+
+  static const List<String> _transitionOptions = [
+    'none',
+    'fade',
+    'slide',
+    'scale',
+  ];
+
+  static const List<String> _presetColors = [
+    '#000000', '#FFFFFF', '#F44336', '#E91E63', '#9C27B0', '#673AB7',
+    '#3F51B5', '#2196F3', '#03A9F4', '#00BCD4', '#009688', '#4CAF50',
+    '#8BC34A', '#CDDC39', '#FFC107', '#FF9800', '#FF5722', '#795548',
+    '#9E9E9E', '#607D8B', '#1976D2', '#BDBDBD', '#424242', '#F5F5F5',
+    'transparent',
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+    final mutator = ref.read(uiMutatorProvider.notifier);
+    final node = widget.node;
+    final transition = node.pageTransition;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // 背景颜色
+        Text('背景颜色', style: theme.textTheme.labelMedium),
+        const SizedBox(height: 4),
+        Row(
+          children: [
+            GestureDetector(
+              onTap: () => _showPresetPalette(context),
+              child: Container(
+                width: 36,
+                height: 36,
+                decoration: BoxDecoration(
+                  color: _parseColor(node.pageBackground ?? ''),
+                  border: Border.all(color: cs.outline),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                controller: _background,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  border: OutlineInputBorder(),
+                  hintText: '#RRGGBB',
+                ),
+                onChanged: (v) => mutator.updateProp(
+                  node.id,
+                  PagePropsKeys.background,
+                  v,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        // 转场动画类型
+        Text('转场动画', style: theme.textTheme.labelMedium),
+        const SizedBox(height: 4),
+        DropdownButtonFormField<String>(
+          value:
+              _transitionOptions.contains(transition) ? transition : 'none',
+          decoration: const InputDecoration(
+            isDense: true,
+            border: OutlineInputBorder(),
+          ),
+          items: const [
+            DropdownMenuItem(value: 'none', child: Text('无')),
+            DropdownMenuItem(value: 'fade', child: Text('淡入淡出')),
+            DropdownMenuItem(value: 'slide', child: Text('滑动')),
+            DropdownMenuItem(value: 'scale', child: Text('缩放')),
+          ],
+          onChanged: (v) {
+            if (v != null) {
+              mutator.updateProp(node.id, PagePropsKeys.transition, v);
+            }
+          },
+        ),
+        const SizedBox(height: 8),
+        // 转场时长
+        Text('转场时长(ms)', style: theme.textTheme.labelMedium),
+        const SizedBox(height: 4),
+        TextField(
+          controller: _duration,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(
+            isDense: true,
+            border: OutlineInputBorder(),
+          ),
+          onChanged: (v) {
+            final n = num.tryParse(v);
+            if (n != null) {
+              mutator.updateProp(
+                node.id,
+                PagePropsKeys.transitionDuration,
+                n.toDouble(),
+              );
+            }
+          },
+        ),
+      ],
+    );
+  }
+
+  void _showPresetPalette(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('选择颜色'),
+        content: SizedBox(
+          width: 240,
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final hex in _presetColors)
+                InkWell(
+                  onTap: () {
+                    _background.text = hex;
+                    ref.read(uiMutatorProvider.notifier).updateProp(
+                          widget.node.id,
+                          PagePropsKeys.background,
+                          hex,
+                        );
+                    Navigator.pop(ctx);
+                  },
+                  child: Container(
+                    width: 28,
+                    height: 28,
+                    decoration: BoxDecoration(
+                      color: _parseColor(hex),
+                      border: Border.all(
+                        color: Theme.of(ctx).colorScheme.outline,
+                        width: 0.5,
+                      ),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Color _parseColor(String value) {
+    if (value.isEmpty || value == 'transparent') return Colors.transparent;
+    final hex = value.replaceFirst('#', '');
+    if (hex.length == 6 || hex.length == 8) {
+      try {
+        final rgba = int.parse(hex, radix: 16);
+        if (hex.length == 6) return Color(0xFF000000 | rgba);
+        return Color(rgba);
+      } catch (_) {
+        // 忽略解析失败
+      }
+    }
+    return Colors.transparent;
   }
 }
 
