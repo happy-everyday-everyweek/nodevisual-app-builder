@@ -3,7 +3,6 @@ import 'package:collection/collection.dart';
 import 'db_schema.dart';
 import 'folder.dart';
 import 'function_def.dart';
-import 'page.dart';
 import 'project_variable.dart';
 import 'ui_tree.dart';
 
@@ -131,8 +130,9 @@ class ProjectMeta {
 /// - [functions]：函数段（函数定义，含节点图与函数变量）。
 /// - [folders]：文件夹树（组织函数，支持无限嵌套）。
 /// - [db]：数据库段（表结构定义）。
-/// - [pages]：页面段（命名 UI 根，承载页面级触发与页面作用域函数变量）。
-/// - [ui]：UI 段（顶层 UI 节点树根，每个根可挂载到一个 [Page]）。
+/// - [ui]：UI 段（页面列表，每个元素是 type='page' 的 Page 节点，
+///   承载页面级 props 与生命周期触发；Page 节点的 children 为该页面的
+///   UI 根节点树）。
 ///
 /// 双平面模型贯穿 [functions]：控制流由 [FunctionDef.controlEdges]
 /// 表达，数据由节点 `#` 引用（[VariableRef]）在节点编辑页内拼装。
@@ -152,10 +152,12 @@ class Project {
   /// 数据库表定义列表（数据库段）。
   final List<DbTable> db;
 
-  /// 页面列表（页面段，命名 UI 根）。
-  final List<Page> pages;
-
-  /// 顶层 UI 节点列表（UI 段根节点集合，每个根可关联到一个 [Page]）。
+  /// 页面列表（UI 段，每个元素是 type='page' 的 Page 节点）。
+  ///
+  /// Page 节点是特殊 [UiNode]：其 [UiNode.children] 为该页面的 UI 根节点树，
+  /// [UiNode.props] 存页面属性（name/route/isHome 等），
+  /// [UiNode.triggers] 存生命周期触发（onLoad/onDispose 等）。
+  /// 使用 `import 'page.dart'` 中的 [createPageNode] / [PageNodeExtension] 操作。
   final List<UiNode> ui;
 
   const Project({
@@ -164,7 +166,6 @@ class Project {
     this.functions = const [],
     this.folders = const [],
     this.db = const [],
-    this.pages = const [],
     this.ui = const [],
   });
 
@@ -174,7 +175,6 @@ class Project {
     List<FunctionDef>? functions,
     List<Folder>? folders,
     List<DbTable>? db,
-    List<Page>? pages,
     List<UiNode>? ui,
   }) =>
       Project(
@@ -183,7 +183,6 @@ class Project {
         functions: functions ?? this.functions,
         folders: folders ?? this.folders,
         db: db ?? this.db,
-        pages: pages ?? this.pages,
         ui: ui ?? this.ui,
       );
 
@@ -196,7 +195,6 @@ class Project {
           _projDeepEq.equals(functions, other.functions) &&
           _projDeepEq.equals(folders, other.folders) &&
           _projDeepEq.equals(db, other.db) &&
-          _projDeepEq.equals(pages, other.pages) &&
           _projDeepEq.equals(ui, other.ui);
 
   @override
@@ -206,7 +204,6 @@ class Project {
         Object.hashAll(functions),
         Object.hashAll(folders),
         Object.hashAll(db),
-        Object.hashAll(pages),
         Object.hashAll(ui),
       );
 
@@ -216,7 +213,6 @@ class Project {
         'functions': functions.map((e) => e.toJson()).toList(),
         'folders': folders.map((e) => e.toJson()).toList(),
         'db': db.map((e) => e.toJson()).toList(),
-        'pages': pages.map((e) => e.toJson()).toList(),
         'ui': ui.map((e) => e.toJson()).toList(),
       };
 
@@ -237,10 +233,6 @@ class Project {
             const [],
         db: (json['db'] as List<dynamic>?)
                 ?.map((e) => DbTable.fromJson(e as Map<String, dynamic>))
-                .toList() ??
-            const [],
-        pages: (json['pages'] as List<dynamic>?)
-                ?.map((e) => Page.fromJson(e as Map<String, dynamic>))
                 .toList() ??
             const [],
         ui: (json['ui'] as List<dynamic>?)

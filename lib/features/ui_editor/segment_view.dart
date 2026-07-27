@@ -837,7 +837,11 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
 
   void _addComponent(String type, String? selectedId) {
     final mutator = ref.read(uiMutatorProvider.notifier);
-    // 若选中了可容纳子节点的组件，添加为其子节点；否则添加为根节点。
+    final project = ref.read(uiMutatorProvider);
+    if (project == null) return;
+    // Phase 6：addComponent 强制 pageId 校验。优先用当前选中页面，
+    // 否则取选中容器所属页面，再退化为项目首个页面。
+    String? pageId = ref.read(selectedPageIdProvider);
     String? parentId;
     if (selectedId != null) {
       final found = mutator.findNode(selectedId);
@@ -845,9 +849,19 @@ class _UiEditorSegmentViewState extends ConsumerState<UiEditorSegmentView> {
       if (found != null &&
           _canHaveChildrenWithPlugins(found.node.type, pluginEntries)) {
         parentId = selectedId;
+        // 继承选中容器所属页面。
+        final ownerPage = mutator.getNodePage(selectedId);
+        if (ownerPage != null) pageId = ownerPage.id;
       }
     }
-    mutator.addComponent(type, parentId: parentId);
+    if (pageId == null || pageId.isEmpty) {
+      // 无选中页面：退化为项目首个 Page（保证可添加）。
+      final firstPage = project.ui.where((n) => n.isPage).firstOrNull;
+      if (firstPage == null) return;
+      pageId = firstPage.id;
+      if (parentId == null) parentId = pageId;
+    }
+    mutator.addComponent(type, parentId: parentId, pageId: pageId);
   }
 
   // ---- 组件面板 BottomSheet（窄屏）----
@@ -2423,7 +2437,7 @@ class PagePanel extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
-    final pages = project.pages;
+    final pages = project.ui.where((n) => n.isPage).toList(growable: false);
     return ListView(
       controller: scrollController,
       padding: const EdgeInsets.all(12),
@@ -2474,7 +2488,8 @@ class PagePanel extends ConsumerWidget {
 class _PageCard extends ConsumerStatefulWidget {
   const _PageCard({required this.page, required this.project});
 
-  final Page page;
+  /// Page 节点（特殊 UiNode，type=='page'）。
+  final UiNode page;
   final Project project;
 
   @override
@@ -2491,31 +2506,14 @@ class _PageCardState extends ConsumerState<_PageCard> {
     final page = widget.page;
     final project = widget.project;
 
-    // 找到该页面关联的 UI 根节点。
-    UiNode? rootNode;
-    if (page.rootUiNodeId != null) {
-      for (final n in project.ui) {
-        if (n.id == page.rootUiNodeId) {
-          rootNode = n;
-          break;
-        }
-      }
-    }
-    // 若未关联根节点，但项目只有 1 个 UI 根节点且无其他页面关联它，
-    // 自动以该根节点为组件树展示来源（更直观）。
-    if (rootNode == null && project.ui.isNotEmpty) {
-      // 仅当该页面是唯一/首页时尝试关联第一个未关联的根节点用于展示。
-      final unassignedRoots = project.ui.where((n) {
-        return project.pages.every((p) => p.rootUiNodeId != n.id);
-      }).toList();
-      if (unassignedRoots.length == 1) {
-        rootNode = unassignedRoots.first;
-      }
-    }
-
-    final childCount = rootNode == null
-        ? 0
-        : _countDescendants(rootNode);
+    // Page 节点的 children 即该页面的 UI 根节点树。
+    final pageChildren = page.children;
+    final hasRoots = pageChildren.isNotEmpty;
+    // 统计所有根节点下的后代总数（不含根节点自身）。
+    final childCount = pageChildren.fold<int>(
+      0,
+      (sum, n) => sum + _countDescendants(n),
+    );
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -2532,12 +2530,12 @@ class _PageCardState extends ConsumerState<_PageCard> {
             padding: const EdgeInsets.fromLTRB(12, 10, 8, 4),
             child: Row(
               children: [
-                Icon(page.isHome ? Icons.home : Icons.article_outlined,
+                Icon(page.isHomePage ? Icons.home : Icons.article_outlined,
                     size: 16, color: theme.colorScheme.primary),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    page.name,
+                    page.pageName ?? '未命名页面',
                     style: theme.textTheme.labelLarge?.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
@@ -2545,7 +2543,7 @@ class _PageCardState extends ConsumerState<_PageCard> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                if (page.isHome)
+                if (page.isHomePage)
                   Container(
                     padding:
                         const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -2558,7 +2556,7 @@ class _PageCardState extends ConsumerState<_PageCard> {
                             ?.copyWith(fontWeight: FontWeight.w600)),
                   ),
                 // 组件层级树展开按钮（仅有根节点时显示）。
-                if (rootNode != null)
+                if (hasRoots)
                   IconButton(
                     tooltip: _treeExpanded ? '折叠组件树' : '展开组件树',
                     icon: Icon(
@@ -2598,14 +2596,14 @@ class _PageCardState extends ConsumerState<_PageCard> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // 组件层级树概要 + 展开内容
-                if (rootNode != null) ...[
+                if (hasRoots) ...[
                   Row(
                     children: [
                       Icon(Icons.account_tree_outlined,
                           size: 13, color: theme.colorScheme.onSurfaceVariant),
                       const SizedBox(width: 4),
                       Text(
-                        '$childCount 个组件 · 根: ${_nodeLabel(rootNode)}',
+                        '$childCount 个组件 · ${pageChildren.length} 个根',
                         style: theme.textTheme.labelSmall?.copyWith(
                           color: theme.colorScheme.onSurfaceVariant,
                         ),
@@ -2614,18 +2612,19 @@ class _PageCardState extends ConsumerState<_PageCard> {
                   ),
                   if (_treeExpanded) ...[
                     const SizedBox(height: 6),
-                    _ComponentTreeNode(
-                      node: rootNode,
-                      depth: 0,
-                      project: project,
-                    ),
+                    for (final root in pageChildren)
+                      _ComponentTreeNode(
+                        node: root,
+                        depth: 0,
+                        project: project,
+                      ),
                     const SizedBox(height: 8),
                   ],
                 ] else
                   Padding(
                     padding: const EdgeInsets.only(top: 4),
                     child: Text(
-                      '提示：将一个 UI 根节点关联到此页面以启用页面级触发。',
+                      '提示：在画布中添加组件到此页面以启用页面级触发。',
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.outline,
                         fontStyle: FontStyle.italic,
@@ -2652,7 +2651,7 @@ class _PageCardState extends ConsumerState<_PageCard> {
 
   Future<void> _rename() async {
     final name = await _promptString(context,
-        title: '重命名页面', hint: '页面名', initial: widget.page.name);
+        title: '重命名页面', hint: '页面名', initial: widget.page.pageName ?? '');
     if (name == null || name.trim().isEmpty) return;
     ref.read(uiMutatorProvider.notifier).updatePage(widget.page.id, name: name.trim());
   }

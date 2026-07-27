@@ -148,8 +148,63 @@ class AndroidBuilder with BuilderUtils implements PlatformBuilder {
 2. 读取 \`manifest.json\` 校验版本兼容性
 3. 加载 \`ir.json\` 到 [Project] 模型
 4. 启动 Flutter 应用，使用 [NodeInterpreter] 执行函数
-5. 渲染 \`ir.ui.tree\` 为 Flutter UI
+5. 渲染 \`ir.ui\`（Page 节点数组）为 Flutter UI
 6. 处理 UI 事件 → 触发函数 → 更新绑定
+
+## UI 结构（v1.0 重构）
+
+\`ir.ui\` 为 \`List<UiNode>\` 的扁平数组，每个元素是一个 [UiNode]。
+**Page 作为根节点**：Page 节点是一种特殊的 [UiNode]（\`type='page'\`），
+其 \`id\` 即页面 id，\`children\` 为该页面的 UI 根节点树。
+
+### UiNode 五段结构
+每个 [UiNode] 含以下字段：
+
+- \`props\`：静态属性（组件特有参数；Page 节点存 name/route/isHome/background/safeArea 等页面属性）
+- \`layout\`：[LayoutConfig] 布局配置（双模布局，见下文）；null 表示沿用默认流式布局
+- \`style\`：视觉样式 map（color / fontSize / padding / borderRadius / border / opacity 等，与 props 的功能参数区分）
+- \`animations\`：[AnimationsConfig] 动画配置（入场 / 出场 / 触发动画）
+- \`triggers\`：事件名 → 函数 id 映射（如 \`onTap\` -> \`func-uuid\`；Page 节点此处存生命周期触发）
+- \`bindings\`：属性绑定（属性名 -> [Binding]，运行时按 \`#\` 引用动态解析）
+- \`children\`：子节点列表（无限嵌套）
+
+### 双模布局系统
+[LayoutConfig] 支持两种模式（\`mode\` 字段）：
+
+- **relative（9 宫格相对布局）**：使用 \`cell\`（1-9 宫格归属）+ \`distance\`（距最近边）定位。
+  - cell 1/2/3 从顶部往下堆叠；7/8/9 从底部往上堆叠
+  - cell 4 从左往右堆叠；6 从右往左堆叠；cell 5 中心堆叠
+  - 同 cell 内按 \`distance.value\` 升序排列
+- **absolute（绝对布局）**：使用 \`x\` / \`y\` 坐标定位（支持百分比 / 像素）
+
+两种模式下 \`width\` / \`height\` 必填（[SizeSpec] 支持百分比 + minPx/maxPx 约束），
+\`margin\` 为 4 方向外间距。Runner 应使用 [LayoutContainer] + [LayoutChild]
+渲染（与编辑器端 RelativeLayoutRenderObject / AbsoluteLayoutRenderObject 对齐）。
+
+### 动画系统
+[AnimationsConfig] 含三类动画：
+
+- \`entrance\`：入场动画（节点首次渲染时自动播放）
+- \`exit\`：出场动画（节点被移除时播放）
+- \`triggered\`：事件触发动画列表（由 UI 事件驱动，每个 [TriggeredAnimation] 绑定一个事件名到 [AnimationSpec]）
+
+[AnimationSpec] 支持两种形式（二选一）：
+- \`preset\`：预设动画（fade / slide / scale / bounce / rotate / elastic）
+- \`keyframes\`：关键帧动画（time 0-1 归一化时间 + KeyframeProperties 变换状态）
+
+含 \`duration\` / \`delay\`（毫秒）与 \`easing\`（linear / easeIn / easeOut / easeInOut / bounce / elastic）。
+
+### Page 生命周期触发
+Page 节点的 \`triggers\` 存生命周期事件 → 函数 id：
+- \`onLoad\`：页面加载时触发（进入页面）
+- \`onDispose\`：页面销毁时触发（离开页面）
+- \`onResume\`：页面恢复时触发（从后台/下级页面返回）
+- \`onPause\`：页面暂停时触发（切到后台/跳到下级页面）
+
+Page 节点 \`id\` 用于：
+- [PageLifecycleManager] 的 pageId 参数
+- 函数入口 [FunctionEntry] 的 pageEvent ref \`<pageId>:<event>\`
+- 页面级函数 outputs 缓存的归属（页面卸载时清空，确保跨页面不串扰）
 
 ## v1 支持的节点类型
 - 变量：variable_set（读取用 `#` 引用，无 variable_get）
@@ -157,7 +212,7 @@ class AndroidBuilder with BuilderUtils implements PlatformBuilder {
 - 逻辑：logic, compare, type_check, ternary
 - 流程：if, loop, function_call, return（多返回值按 outputs 名映射）
 - 数据库：db_query_one, db_query_rows, db_aggregate, db_insert, db_insert_rows, db_update, db_delete, db_create_table, db_alter_table
-- UI 控制：ui_set_text, ui_set_visible, ui_set_enabled, ui_set_prop, ui_navigate, ui_show_toast
+- UI 控制：ui_set_text, ui_set_visible, ui_set_enabled, ui_set_prop, ui_set_style, ui_set_layout, ui_set_trigger, ui_play_animation, ui_navigate, ui_show_toast
 - 插件：plugin_*（按注册的插件 executor 执行）
 
 ## 函数签名
@@ -167,7 +222,8 @@ class AndroidBuilder with BuilderUtils implements PlatformBuilder {
 ## 页面触发
 - 函数入口 entry.kind = pageEvent，ref 形如 `<pageId>:<event>`
 - 支持事件：onLoad / onDispose / onResume / onPause
-- onLoad 函数的 outputs 缓存到页面作用域，供同页面 UI 组件 `#` 引用
+- onLoad 函数的 outputs 缓存到页面作用域（[RuntimeScope.pageFuncOutputs]），供同页面 UI 组件 `#` 引用
+- 页面卸载时调用 [RuntimeScope.clearPageFuncOutputs] 清空缓存，避免跨页面串扰
 
 ## 变量作用域（四源）
 - 项目变量：`#projVar`，引用项目级变量
@@ -178,6 +234,18 @@ class AndroidBuilder with BuilderUtils implements PlatformBuilder {
 ## 时间线与加载态
 - 函数未就绪时（running/idle/error），UI 引用按加载态策略返回：
   - typeDefault（默认值）/ placeholder（占位文字）/ blank（不渲染）
+
+## 运行时 UI 状态覆盖（RuntimeUiState）
+\`ui_*\` 控制节点在函数执行期间通过 [RuntimeUiState] 修改 UI 组件运行时表现，
+覆盖 [UiNode] 的各段：
+- \`props\`：覆盖业务属性（text / value 等）
+- \`style\`：覆盖视觉样式（color / fontSize 等）
+- \`layout\`：整体替换 [LayoutConfig]
+- \`triggers\`：覆盖事件 → 函数 id 映射
+- \`visible\` / \`enabled\`：覆盖可见性 / 启用状态
+- \`animationRequests\`：运行时动画播放请求（entrance / exit / triggered）
+
+UI 渲染层在渲染对应组件时合并这些覆盖到基础 [UiNode] 值。
 
 ## v1 限制
 - Web/Windows 端不支持 db_* 与 plugin_* 节点（降级为 no-op）
