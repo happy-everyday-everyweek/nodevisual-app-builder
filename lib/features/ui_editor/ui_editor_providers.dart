@@ -243,6 +243,18 @@ class UiMutator extends Notifier<Project?> {
     _commit(p.copyWith(ui: newUi));
   }
 
+  /// 更新节点布局配置；layout 为 null 时清除布局（退化为默认流式布局）。
+  ///
+  /// 供布局属性面板与长按移动模式处理器提交 [LayoutConfig] 变更使用。
+  void updateLayout(String id, LayoutConfig? layout) {
+    final p = _project;
+    if (p == null) return;
+    final newUi = p.ui
+        .map((r) => _updateNode(r, id, (n) => n.copyWith(layout: layout)))
+        .toList(growable: false);
+    _commit(p.copyWith(ui: newUi));
+  }
+
   UiNode _updateNode(
       UiNode node, String id, UiNode Function(UiNode) updater,) {
     if (node.id == id) return updater(node);
