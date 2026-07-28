@@ -452,16 +452,20 @@ class WebRuntimeTemplate {
 
   // 应用 LayoutConfig 到元素本身（width/height/margin）。
   // 位置（cell/distance/x/y）由父容器的堆叠算法计算，此处不设置。
-  function applyLayout(el, uiNode) {
+  // parentEl 用于解析 percent 单位（宽度/高度相对父容器）；未提供时
+  // percent 退化为 0（由调用方在挂载后覆盖设置）。
+  function applyLayout(el, uiNode, parentEl) {
     var layout = uiNode.layout;
     if (!layout) return;
-    if (layout.width) el.style.width = resolveSize(layout.width, null);
-    if (layout.height) el.style.height = resolveSize(layout.height, null);
+    var pw = (parentEl && parentEl.clientWidth) ? parentEl.clientWidth : 0;
+    var ph = (parentEl && parentEl.clientHeight) ? parentEl.clientHeight : 0;
+    if (layout.width) el.style.width = resolveSize(layout.width, pw);
+    if (layout.height) el.style.height = resolveSize(layout.height, ph);
     if (layout.margin) {
-      el.style.marginTop = resolveEdge(layout.margin.top, null);
-      el.style.marginBottom = resolveEdge(layout.margin.bottom, null);
-      el.style.marginLeft = resolveEdge(layout.margin.left, null);
-      el.style.marginRight = resolveEdge(layout.margin.right, null);
+      el.style.marginTop = resolveEdge(layout.margin.top, ph);
+      el.style.marginBottom = resolveEdge(layout.margin.bottom, ph);
+      el.style.marginLeft = resolveEdge(layout.margin.left, pw);
+      el.style.marginRight = resolveEdge(layout.margin.right, pw);
     }
   }
 
@@ -532,34 +536,40 @@ class WebRuntimeTemplate {
     }
   }
 
-  // 渲染 9 宫格堆叠布局：父容器作为 grid（3×3），每个 cell 内按堆叠方向排列。
-  // 子组件的 distance.value 作为该 cell 起始边的偏移（margin）。
+  // 渲染 9 宫格堆叠布局：父容器 flex column，每个 cell 容器 width 100%
+  // 撑满父容器，cell 内按堆叠方向（flexDirection）排列子组件。
+  // 子组件的 width 100% 相对父容器解析，实现左右撑满。
+  // distance.value 作为该 cell 起始边的偏移（margin）。
   function renderChildrenRelative(parentEl, children) {
     parentEl.style.position = "relative";
-    parentEl.style.display = "grid";
-    parentEl.style.gridTemplateColumns = "1fr 1fr 1fr";
-    parentEl.style.gridTemplateRows = "1fr 1fr 1fr";
+    parentEl.style.display = "flex";
+    parentEl.style.flexDirection = "column";
+    parentEl.style.width = "100%";
 
-    // 按 cell 分组（默认 cell=5）。
+    // 按 cell 分组（默认 cell=2 上中，与 Dart 端 defaultCell 一致）。
     var groups = {};
     children.forEach(function(child) {
-      var cell = (child.layout && child.layout.cell) ? child.layout.cell.cell : 5;
+      var cell = (child.layout && child.layout.cell) ? child.layout.cell.cell : 2;
       if (!groups[cell]) groups[cell] = [];
       groups[cell].push(child);
     });
 
-    // 为每个 cell 创建一个容器，按 children 列表顺序渲染子组件（不按 distance 排序）。
-    Object.keys(groups).forEach(function(cellStr) {
-      var cell = parseInt(cellStr, 10);
+    var pw = parentEl.clientWidth || parentEl.offsetWidth || 0;
+    var ph = parentEl.clientHeight || parentEl.offsetHeight || 0;
+
+    // 按 cell 1→9 顺序渲染，每个 cell 容器 width 100% 撑满父容器。
+    var cellOrder = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+    cellOrder.forEach(function(cell) {
       var cellChildren = groups[cell];
+      if (!cellChildren || cellChildren.length === 0) return;
 
       var info = getCellStackingInfo(cell);
       var cellEl = document.createElement("div");
-      cellEl.style.gridArea = Math.ceil(cell / 3) + " / " + (((cell - 1) % 3) + 1);
       cellEl.style.display = "flex";
       cellEl.style.flexDirection = info.flexDirection;
       cellEl.style.justifyContent = info.justifyContent;
       cellEl.style.alignItems = info.alignItems;
+      cellEl.style.width = "100%";
       cellEl.style.minHeight = "0";
       cellEl.style.minWidth = "0";
 
@@ -573,11 +583,23 @@ class WebRuntimeTemplate {
       }
 
       cellChildren.forEach(function(child) {
-        // distance.value 作为该 cell 起始边的偏移（margin）。
         var dist = (child.layout && child.layout.distance) ? child.layout.distance.value : 0;
         var childEl = renderNode(child, cellEl);
         if (childEl) {
-          // 根据堆叠方向把 distance 转为 margin（首个子组件的起始偏移）。
+          // 覆盖设置 width/height/margin（基于父容器尺寸解析 percent），
+          // 确保 width 100% 撑满父容器。
+          var layout = child.layout;
+          if (layout) {
+            if (layout.width) childEl.style.width = resolveSize(layout.width, pw);
+            if (layout.height) childEl.style.height = resolveSize(layout.height, ph);
+            if (layout.margin) {
+              childEl.style.marginTop = resolveEdge(layout.margin.top, ph);
+              childEl.style.marginBottom = resolveEdge(layout.margin.bottom, ph);
+              childEl.style.marginLeft = resolveEdge(layout.margin.left, pw);
+              childEl.style.marginRight = resolveEdge(layout.margin.right, pw);
+            }
+          }
+          // distance 作为该 cell 起始边的偏移（margin）。
           if (dist > 0) {
             switch (info.flexDirection) {
               case "column":       childEl.style.marginTop = dist + "px"; break;
@@ -820,7 +842,8 @@ class WebRuntimeTemplate {
     root.style.paddingBottom = padBottom;
 
     // 渲染 Page 节点的 children 作为 UI 根树。
-    // 若 children 含 LayoutConfig，使用 9 宫格堆叠布局；否则默认流式布局。
+    // 布局强制开启：含 LayoutConfig 时按 9 宫格堆叠或绝对坐标定位；
+    // 历史数据无 layout 时回退到默认垂直堆叠。
     var pageChildren = pageNode.children || [];
     if (childrenHaveAbsolute(pageChildren)) {
       renderChildrenAbsolute(root, pageChildren);
@@ -1068,7 +1091,7 @@ class WebRuntimeTemplate {
     el.setAttribute("data-ui-id", uiNode.id || "");
 
     // 应用 LayoutConfig（width/height/margin；位置由父容器布局算法计算）。
-    applyLayout(el, uiNode);
+    applyLayout(el, uiNode, parent);
     // 应用 UiNode.style（视觉样式 map）。
     applyStyle(el, uiNode);
 
@@ -1106,8 +1129,8 @@ class WebRuntimeTemplate {
       if (el._componentContext) {
         pushComponentContext(el._componentContext);
       }
-      // 子组件布局：若含 LayoutConfig，使用 9 宫格堆叠或绝对布局；
-      // 否则沿用默认流式布局（flex）。
+      // 子组件布局：布局强制开启，含 LayoutConfig 时按 9 宫格堆叠或绝对坐标定位；
+      // 历史数据无 layout 时回退到默认垂直堆叠。
       if (childrenHaveAbsolute(uiNode.children)) {
         renderChildrenAbsolute(el, uiNode.children);
       } else if (childrenHaveLayout(uiNode.children)) {

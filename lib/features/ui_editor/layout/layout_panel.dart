@@ -14,8 +14,9 @@ import '../widgets/grid9_selector.dart';
 /// 两种模式均可编辑宽高（含单位与 minPx/maxPx clamp）与 4 方向外间距。
 /// 所有变更通过 [UiMutator.updateLayout] 实时提交。
 ///
-/// 当节点未启用布局时（[UiNode.layout] 为 null），显示"启用布局"按钮，
-/// 创建默认相对布局配置。
+/// 布局是强制开启的：当节点历史数据 [UiNode.layout] 为 null 时，
+/// 面板以默认相对布局（2 号宫格 + 宽度 100%）为编辑起点直接呈现编辑器，
+/// 用户任意一项修改都会写入实际 [LayoutConfig]。
 class LayoutPanel extends ConsumerWidget {
   const LayoutPanel({super.key, required this.nodeId});
 
@@ -31,9 +32,8 @@ class LayoutPanel extends ConsumerWidget {
     if (found == null) return const SizedBox.shrink();
 
     final node = found.node;
-    final layout = node.layout;
-    final theme = Theme.of(context);
-    final cs = theme.colorScheme;
+    // 布局强制开启：历史数据 layout 为 null 时以默认布局为编辑起点。
+    final layout = node.layout ?? _defaultLayout();
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(12),
@@ -41,51 +41,27 @@ class LayoutPanel extends ConsumerWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           _LayoutSectionHeader(title: '布局', icon: Icons.view_quilt_rounded),
-          if (layout == null) ...[
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Text(
-                '未启用布局配置，组件使用默认流式布局。'
-                '启用后将按 9 宫格相对布局或绝对坐标定位。',
-                style: theme.textTheme.bodySmall
-                    ?.copyWith(color: cs.onSurfaceVariant),
-              ),
-            ),
-            FilledButton.icon(
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('启用布局'),
-              onPressed: () => _commit(ref, _defaultLayout()),
-            ),
-          ] else ...[
-            _buildModeSelector(context, ref, layout),
-            const SizedBox(height: 12),
-            if (layout.mode == LayoutMode.relative)
-              _buildRelativeEditors(context, ref, layout)
-            else
-              _buildAbsoluteEditors(context, ref, layout),
-            const Divider(),
-            _buildSizeEditors(context, ref, layout),
-            const Divider(),
-            _buildMarginEditors(context, ref, layout),
-            const Divider(),
-            TextButton.icon(
-              icon: Icon(Icons.delete_outline, size: 18, color: cs.error),
-              label: Text('清除布局', style: TextStyle(color: cs.error)),
-              onPressed: () =>
-                  ref.read(uiMutatorProvider.notifier).updateLayout(nodeId, null),
-            ),
-          ],
+          _buildModeSelector(context, ref, layout),
+          const SizedBox(height: 12),
+          if (layout.mode == LayoutMode.relative)
+            _buildRelativeEditors(context, ref, layout)
+          else
+            _buildAbsoluteEditors(context, ref, layout),
+          const Divider(),
+          _buildSizeEditors(context, ref, layout),
+          const Divider(),
+          _buildMarginEditors(context, ref, layout),
         ],
       ),
     );
   }
 
-  /// 默认布局配置（启用布局时创建）。
+  /// 默认布局配置：相对布局 + 2 号宫格（上中）+ 宽度 100% 撑满。
   static LayoutConfig _defaultLayout() => const LayoutConfig(
         mode: LayoutMode.relative,
-        cell: GridCell.center(),
+        cell: GridCell.topCenter(),
         width: SizeSpec(value: 100, unit: SizeUnit.percent),
-        height: SizeSpec(value: 50, unit: SizeUnit.px),
+        height: SizeSpec(value: 40, unit: SizeUnit.px),
       );
 
   void _commit(WidgetRef ref, LayoutConfig layout) {

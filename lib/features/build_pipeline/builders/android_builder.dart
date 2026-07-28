@@ -161,7 +161,7 @@ class AndroidBuilder with BuilderUtils implements PlatformBuilder {
 每个 [UiNode] 含以下字段：
 
 - \`props\`：静态属性（组件特有参数；Page 节点存 name/route/isHome/background/safeArea 等页面属性）
-- \`layout\`：[LayoutConfig] 布局配置（双模布局，见下文）；null 表示沿用默认流式布局
+- \`layout\`：[LayoutConfig] 布局配置（双模布局，见下文）；null 仅历史数据兼容，回退到默认相对布局（2 号宫格）
 - \`style\`：视觉样式 map（color / fontSize / padding / borderRadius / border / opacity 等，与 props 的功能参数区分）
 - \`animations\`：[AnimationsConfig] 动画配置（入场 / 出场 / 触发动画）
 - \`triggers\`：事件名 → 函数 id 映射（如 \`onTap\` -> \`func-uuid\`；Page 节点此处存生命周期触发）

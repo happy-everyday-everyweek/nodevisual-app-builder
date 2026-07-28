@@ -18,13 +18,13 @@ import '../../../data/models/ui_tree.dart';
 class RelativeLayoutEngine {
   RelativeLayoutEngine._();
 
-  /// 默认 cell（未指定时归中心）。
-  static const int defaultCell = 5;
+  /// 默认 cell（未指定时归 2 号=上中）。
+  static const int defaultCell = 2;
 
   /// 将子组件按 [LayoutConfig.cell] 分组到 9 个队列。
   ///
   /// 仅处理 [LayoutMode.relative] 模式且 [LayoutConfig.cell] 非空的子组件。
-  /// 未指定 cell 的相对组件归入 [defaultCell]（中心）。
+  /// 未指定 cell 的相对组件归入 [defaultCell]（2 号=上中）。
   static Map<int, List<UiNode>> groupChildrenByCell(
     List<UiNode> children,
   ) {
