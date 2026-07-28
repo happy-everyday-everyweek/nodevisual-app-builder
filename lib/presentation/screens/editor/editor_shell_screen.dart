@@ -6,7 +6,7 @@ import '../../../features/database/segment_view.dart';
 import '../../../features/functions/segment_view.dart';
 import '../../../features/project/project_providers.dart';
 import '../../../features/publish/segment_view.dart';
-import '../../../features/ui_editor/segment_view.dart';
+import '../../../features/ui_editor/v2/ui_editor_view.dart';
 import '../../widgets/capsule_top_bar.dart';
 
 /// 项目编辑器宿主屏幕。
@@ -102,7 +102,7 @@ class _EditorShellScreenState extends ConsumerState<EditorShellScreen> {
     final children = const [
       FunctionsSegmentView(),
       DatabaseSegmentView(),
-      UiEditorSegmentView(),
+      UiEditorView(),
       PublishSegmentView(),
     ];
 
