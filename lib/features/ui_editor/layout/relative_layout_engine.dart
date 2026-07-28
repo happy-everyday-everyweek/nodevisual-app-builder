@@ -331,7 +331,7 @@ class RelativeLayoutEngine {
       cursorY += size.height + edgeInsets.bottom;
       // 后续组件的 margin.top 也累加（保证间距）。
       if (i < queue.length - 1) {
-        cursorY += margin.top;
+        cursorY += edgeInsets.top;
       }
     }
   }
@@ -365,7 +365,7 @@ class RelativeLayoutEngine {
       placements.add(CellPlacement(node: node, offset: Offset(x, cursorY)));
       // 后续组件紧贴上一个的上方（无额外间距，外间距已计入）。
       if (i < queue.length - 1) {
-        cursorY -= margin.bottom;
+        cursorY -= edgeInsets.bottom;
       }
     }
   }
@@ -397,7 +397,7 @@ class RelativeLayoutEngine {
       placements.add(CellPlacement(node: node, offset: Offset(cursorX, y)));
       cursorX += size.width + edgeInsets.right;
       if (i < queue.length - 1) {
-        cursorX += margin.left;
+        cursorX += edgeInsets.left;
       }
     }
   }
@@ -430,7 +430,7 @@ class RelativeLayoutEngine {
       );
       placements.add(CellPlacement(node: node, offset: Offset(cursorX, y)));
       if (i < queue.length - 1) {
-        cursorX -= margin.right;
+        cursorX -= edgeInsets.right;
       }
     }
   }
@@ -463,7 +463,7 @@ class RelativeLayoutEngine {
         final x = (parentSize.width - size.width) / 2;
         placements.add(CellPlacement(node: node, offset: Offset(x, cursorY)));
         if (i < queue.length - 1) {
-          cursorY -= margin.top;
+          cursorY -= edgeInsets.top;
         }
       }
     } else {
@@ -481,7 +481,7 @@ class RelativeLayoutEngine {
         placements.add(CellPlacement(node: node, offset: Offset(x, cursorY)));
         cursorY += size.height + edgeInsets.bottom;
         if (i < queue.length - 1) {
-          cursorY += margin.top;
+          cursorY += edgeInsets.top;
         }
       }
     }

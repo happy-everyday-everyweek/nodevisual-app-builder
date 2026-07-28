@@ -9,7 +9,7 @@ const ComponentDef iconButtonComponentDef = ComponentDef(
   type: 'icon_button',
   label: '图标按钮',
   category: ComponentCategory.interactive,
-  icon: Icons.icons_outlined,
+  icon: Icons.touch_app_outlined,
   isContainer: false,
   props: [
     PropSpec(
