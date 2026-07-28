@@ -434,13 +434,13 @@ class UiMutator extends Notifier<Project?> {
 
   /// 切换节点布局模式（relative / absolute）。
   ///
-  /// 切换到 absolute 时清除 cell/distance（相对布局专属字段）；
+  /// 切换到 absolute 时清除 cell（相对布局专属字段）；
   /// 切换到 relative 时清除 x/y（绝对布局专属字段），保证配置自洽。
   void setLayoutMode(String id, LayoutMode mode) {
     _updateLayout(id, (cur) {
       var next = cur.copyWith(mode: mode);
       if (mode == LayoutMode.absolute) {
-        next = next.copyWith(cell: null, distance: null);
+        next = next.copyWith(cell: null);
       } else {
         next = next.copyWith(x: null, y: null);
       }
@@ -448,25 +448,19 @@ class UiMutator extends Notifier<Project?> {
     });
   }
 
-  /// 设置 9 宫格归属（相对布局）；同时把模式强制为 relative 并清除 x/y。
+  /// 设置相对布局归属位置；同时把模式强制为 relative 并清除 x/y。
   void setGridCell(String id, GridCell cell) {
     _updateLayout(id, (cur) => cur
         .copyWith(mode: LayoutMode.relative, cell: cell, x: null, y: null));
   }
 
-  /// 设置距最近边的距离（相对布局）；保留当前 cell。
-  void setDistance(String id, DistanceSpec distance) {
-    _updateLayout(id, (cur) => cur.copyWith(distance: distance));
-  }
-
-  /// 设置绝对布局坐标（x / y）；同时把模式强制为 absolute 并清除 cell/distance。
+  /// 设置绝对布局坐标（x / y）；同时把模式强制为 absolute 并清除 cell。
   void setPosition(String id, PositionSpec x, PositionSpec y) {
     _updateLayout(id, (cur) => cur.copyWith(
           mode: LayoutMode.absolute,
           x: x,
           y: y,
           cell: null,
-          distance: null,
         ));
   }
 

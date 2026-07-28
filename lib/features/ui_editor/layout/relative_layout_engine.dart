@@ -9,12 +9,13 @@ import '../../../data/models/ui_tree.dart';
 /// 本类仅依赖 dart:ui 几何类型与 [EdgeInsets]，不耦合 RenderObject，
 /// 便于单测。真正的渲染由 [RelativeLayoutRenderObject] 调用本引擎完成。
 ///
-/// 9宫格堆叠方向（与 [kGrid9CellStackingDescription] 一致）：
-/// - cell 1（左上）/ 2（上中）/ 3（右上）: 从上往下，垂直从顶部开始
-/// - cell 4（左中）: 从左往右，水平从左开始
-/// - cell 5（中心）: 从中心往上或往下（取决于 distance.edge）
-/// - cell 6（右中）: 从右往左，水平从右开始
-/// - cell 7（左下）/ 8（下中）/ 9（右下）: 从下往上，垂直从底部开始
+/// 相对布局无"距边距离"概念，cell 决定对齐与排列方式：
+/// - 列决定水平对齐：1/4/7=左对齐，2/5/8=居中，3/6/9=右对齐
+/// - 行决定排列方向：
+///   - cell 1/2/3（第一行）：从上往下，垂直从顶部开始
+///   - cell 4（左中）：从左往右；cell 6（右中）：从右往左
+///   - cell 5（中心）：从中心向下堆叠
+///   - cell 7/8/9（第三行）：从下往上，垂直从底部开始
 class RelativeLayoutEngine {
   RelativeLayoutEngine._();
 
@@ -42,94 +43,8 @@ class RelativeLayoutEngine {
   ///
   /// 队列顺序由父组件 `children` 列表顺序决定，用户通过长按移动模式
   /// （`MoveModeHandler`）拖动组件来调整顺序。
-  ///
-  /// `distance.value` 仅作为首个组件距起始边的偏移量，不影响队列顺序。
   static List<UiNode> sortCellQueue(int cell, List<UiNode> children) {
     return List<UiNode>.of(children);
-  }
-
-  /// 计算组件距父组件哪边最近。
-  ///
-  /// 使用组件中心点到父组件 4 条边的距离，取最小者。
-  /// 返回该边方向。组件完全居中（4 距离相等）时返回 [DistanceEdge.top]。
-  static DistanceEdge computeNearestEdge(
-    Rect componentRect,
-    Rect parentRect,
-  ) {
-    final cx = componentRect.center.dx;
-    final cy = componentRect.center.dy;
-    final dTop = (cy - parentRect.top).abs();
-    final dBottom = (parentRect.bottom - cy).abs();
-    final dLeft = (cx - parentRect.left).abs();
-    final dRight = (parentRect.right - cx).abs();
-
-    var minDist = dTop;
-    var edge = DistanceEdge.top;
-    if (dBottom < minDist) {
-      minDist = dBottom;
-      edge = DistanceEdge.bottom;
-    }
-    if (dLeft < minDist) {
-      minDist = dLeft;
-      edge = DistanceEdge.left;
-    }
-    if (dRight < minDist) {
-      minDist = dRight;
-      edge = DistanceEdge.right;
-    }
-    return edge;
-  }
-
-  /// 根据组件位置计算距最近边的距离。
-  ///
-  /// 适用于绝对布局组件转换为相对布局时计算其 [DistanceSpec]：
-  /// 从 [LayoutConfig.x] / [LayoutConfig.y] / [LayoutConfig.width] /
-  /// [LayoutConfig.height] 解析像素位置，再用 [computeNearestEdge] 找最近边。
-  ///
-  /// 若组件缺少 x/y 信息，返回距中心 0 距离的占位 [DistanceSpec]。
-  static DistanceSpec computeDistance(UiNode component, Rect parentRect) {
-    final layout = component.layout;
-    if (layout == null || layout.x == null || layout.y == null) {
-      return const DistanceSpec(
-        edge: DistanceEdge.center,
-        value: 0,
-        unit: SizeUnit.px,
-      );
-    }
-
-    final x = resolvePosition(layout.x!, parentRect.width);
-    final y = resolvePosition(layout.y!, parentRect.height);
-    final w = resolveSize(layout.width, parentRect.width);
-    final h = resolveSize(layout.height, parentRect.height);
-    final componentRect = Rect.fromLTWH(x, y, w, h);
-
-    final edge = computeNearestEdge(componentRect, parentRect);
-
-    double distance;
-    switch (edge) {
-      case DistanceEdge.top:
-        distance = componentRect.top - parentRect.top;
-        break;
-      case DistanceEdge.bottom:
-        distance = parentRect.bottom - componentRect.bottom;
-        break;
-      case DistanceEdge.left:
-        distance = componentRect.left - parentRect.left;
-        break;
-      case DistanceEdge.right:
-        distance = parentRect.right - componentRect.right;
-        break;
-      case DistanceEdge.center:
-        distance = 0;
-        break;
-    }
-    // 防止负距离（组件溢出父边界）。
-    if (distance < 0) distance = 0;
-    return DistanceSpec(
-      edge: edge,
-      value: distance,
-      unit: SizeUnit.px,
-    );
   }
 
   // ---- 单位解析工具（供 RenderObject 复用）----
@@ -315,11 +230,9 @@ class RelativeLayoutEngine {
       final size = childSizes[node] ?? Size.zero;
       final margin = node.layout?.margin ?? const MarginSpec();
       final edgeInsets = resolveMargin(margin, parentSize);
-      // 第一个组件的 y = margin.top + (第一个 distance.value 作为顶部偏移)；
-      // 后续组件紧接前一个堆叠。
+      // 第一个组件从 margin.top 开始；后续组件紧接前一个堆叠。
       if (i == 0) {
-        final firstOffset = node.layout?.distance?.value ?? 0;
-        cursorY = edgeInsets.top + firstOffset;
+        cursorY = edgeInsets.top;
       }
       final x = _alignHorizontal(
         hAlign: hAlign,
@@ -351,8 +264,7 @@ class RelativeLayoutEngine {
       final margin = node.layout?.margin ?? const MarginSpec();
       final edgeInsets = resolveMargin(margin, parentSize);
       if (i == 0) {
-        final firstOffset = node.layout?.distance?.value ?? 0;
-        cursorY = parentSize.height - edgeInsets.bottom - firstOffset - size.height;
+        cursorY = parentSize.height - edgeInsets.bottom - size.height;
       } else {
         cursorY -= size.height + edgeInsets.top;
       }
@@ -385,8 +297,7 @@ class RelativeLayoutEngine {
       final margin = node.layout?.margin ?? const MarginSpec();
       final edgeInsets = resolveMargin(margin, parentSize);
       if (i == 0) {
-        final firstOffset = node.layout?.distance?.value ?? 0;
-        cursorX = edgeInsets.left + firstOffset;
+        cursorX = edgeInsets.left;
       }
       final y = _alignVertical(
         vAlign: vAlign,
@@ -417,8 +328,7 @@ class RelativeLayoutEngine {
       final margin = node.layout?.margin ?? const MarginSpec();
       final edgeInsets = resolveMargin(margin, parentSize);
       if (i == 0) {
-        final firstOffset = node.layout?.distance?.value ?? 0;
-        cursorX = parentSize.width - edgeInsets.right - firstOffset - size.width;
+        cursorX = parentSize.width - edgeInsets.right - size.width;
       } else {
         cursorX -= size.width + edgeInsets.left;
       }
@@ -435,54 +345,30 @@ class RelativeLayoutEngine {
     }
   }
 
-  /// 中心格（cell 5）特殊堆叠：根据 distance.edge 判断向上或向下。
+  /// 中心格（cell 5）：从中心向下堆叠。
   ///
-  /// - [DistanceEdge.top]：从中心往上堆叠
-  /// - [DistanceEdge.bottom]：从中心往下堆叠
-  /// - 其他（含 [DistanceEdge.center]）：默认往下堆叠
+  /// 第一个组件从父容器垂直中心开始，后续组件紧接下方。
   static void _stackCenterCell({
     required List<UiNode> queue,
     required Size parentSize,
     required Map<UiNode, Size> childSizes,
     required List<CellPlacement> placements,
   }) {
-    // 取队列首个组件的 distance.edge 作为堆叠方向（整个队列统一）。
-    final edge = queue.first.layout?.distance?.edge ?? DistanceEdge.bottom;
     final centerOffset = parentSize.height / 2;
-    final firstDistance = queue.first.layout?.distance?.value ?? 0;
-
-    if (edge == DistanceEdge.top) {
-      // 从中心往上堆叠：第一个在 center - distance - height，后续紧接上方。
-      var cursorY = centerOffset - firstDistance;
-      for (var i = 0; i < queue.length; i++) {
-        final node = queue[i];
-        final size = childSizes[node] ?? Size.zero;
-        final margin = node.layout?.margin ?? const MarginSpec();
-        final edgeInsets = resolveMargin(margin, parentSize);
-        cursorY -= size.height + edgeInsets.bottom;
-        final x = (parentSize.width - size.width) / 2;
-        placements.add(CellPlacement(node: node, offset: Offset(x, cursorY)));
-        if (i < queue.length - 1) {
-          cursorY -= edgeInsets.top;
-        }
+    var cursorY = centerOffset;
+    for (var i = 0; i < queue.length; i++) {
+      final node = queue[i];
+      final size = childSizes[node] ?? Size.zero;
+      final margin = node.layout?.margin ?? const MarginSpec();
+      final edgeInsets = resolveMargin(margin, parentSize);
+      if (i == 0) {
+        cursorY += edgeInsets.top;
       }
-    } else {
-      // 从中心往下堆叠：第一个在 center + distance，后续紧接下方。
-      var cursorY = centerOffset + firstDistance;
-      for (var i = 0; i < queue.length; i++) {
-        final node = queue[i];
-        final size = childSizes[node] ?? Size.zero;
-        final margin = node.layout?.margin ?? const MarginSpec();
-        final edgeInsets = resolveMargin(margin, parentSize);
-        if (i == 0) {
-          cursorY += edgeInsets.top;
-        }
-        final x = (parentSize.width - size.width) / 2;
-        placements.add(CellPlacement(node: node, offset: Offset(x, cursorY)));
-        cursorY += size.height + edgeInsets.bottom;
-        if (i < queue.length - 1) {
-          cursorY += edgeInsets.top;
-        }
+      final x = (parentSize.width - size.width) / 2;
+      placements.add(CellPlacement(node: node, offset: Offset(x, cursorY)));
+      cursorY += size.height + edgeInsets.bottom;
+      if (i < queue.length - 1) {
+        cursorY += edgeInsets.top;
       }
     }
   }

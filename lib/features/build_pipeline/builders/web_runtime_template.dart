@@ -539,7 +539,7 @@ class WebRuntimeTemplate {
   // 渲染 9 宫格堆叠布局：父容器 flex column，每个 cell 容器 width 100%
   // 撑满父容器，cell 内按堆叠方向（flexDirection）排列子组件。
   // 子组件的 width 100% 相对父容器解析，实现左右撑满。
-  // distance.value 作为该 cell 起始边的偏移（margin）。
+  // 相对布局无"距边距离"概念，cell 决定对齐（列）与排列方向（行）。
   function renderChildrenRelative(parentEl, children) {
     parentEl.style.position = "relative";
     parentEl.style.display = "flex";
@@ -573,17 +573,7 @@ class WebRuntimeTemplate {
       cellEl.style.minHeight = "0";
       cellEl.style.minWidth = "0";
 
-      // cell 5（中心）特殊：根据首个子组件的 distance.edge 反转方向。
-      if (cell === 5 && cellChildren.length > 0) {
-        var firstEdge = (cellChildren[0].layout && cellChildren[0].layout.distance)
-          ? cellChildren[0].layout.distance.edge : "bottom";
-        if (firstEdge === "top") {
-          cellEl.style.flexDirection = "column-reverse";
-        }
-      }
-
       cellChildren.forEach(function(child) {
-        var dist = (child.layout && child.layout.distance) ? child.layout.distance.value : 0;
         var childEl = renderNode(child, cellEl);
         if (childEl) {
           // 覆盖设置 width/height/margin（基于父容器尺寸解析 percent），
@@ -597,15 +587,6 @@ class WebRuntimeTemplate {
               childEl.style.marginBottom = resolveEdge(layout.margin.bottom, ph);
               childEl.style.marginLeft = resolveEdge(layout.margin.left, pw);
               childEl.style.marginRight = resolveEdge(layout.margin.right, pw);
-            }
-          }
-          // distance 作为该 cell 起始边的偏移（margin）。
-          if (dist > 0) {
-            switch (info.flexDirection) {
-              case "column":       childEl.style.marginTop = dist + "px"; break;
-              case "column-reverse": childEl.style.marginBottom = dist + "px"; break;
-              case "row":          childEl.style.marginLeft = dist + "px"; break;
-              case "row-reverse":  childEl.style.marginRight = dist + "px"; break;
             }
           }
           cellEl.appendChild(childEl);
