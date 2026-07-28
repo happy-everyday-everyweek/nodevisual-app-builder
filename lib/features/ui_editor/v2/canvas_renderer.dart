@@ -156,7 +156,7 @@ class _CanvasRendererState extends ConsumerState<CanvasRenderer> {
 
   /// 默认子组件布局（未配置 layout 时使用）。
   ///
-  /// 跟随父容器模式：relative → 中心 9 宫格 + 自适应尺寸；
+  /// 布局强制开启，默认相对布局 + 2 号宫格（上中）+ 宽度 100%（左右撑满）；
   /// absolute → (0, 0) 坐标 + 自适应尺寸。
   LayoutConfig _defaultChildLayout(LayoutMode parentMode) {
     if (parentMode == LayoutMode.absolute) {
@@ -170,8 +170,8 @@ class _CanvasRendererState extends ConsumerState<CanvasRenderer> {
     }
     return const LayoutConfig(
       mode: LayoutMode.relative,
-      cell: GridCell.center(),
-      width: SizeSpec(value: 80, unit: SizeUnit.px),
+      cell: GridCell.topCenter(),
+      width: SizeSpec(value: 100, unit: SizeUnit.percent),
       height: SizeSpec(value: 40, unit: SizeUnit.px),
     );
   }

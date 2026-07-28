@@ -203,7 +203,8 @@ class UiMutator extends Notifier<Project?> {
       nodePageId = (inherited != null && _pageExists(p, inherited))
           ? inherited
           : pageId;
-      node = _createDefaultNode(type, pageId: nodePageId);
+      node = _createDefaultNode(type, pageId: nodePageId)
+          .copyWith(layout: _newComponentDefaultLayout);
       final newUi = p.ui
           .map((r) => _insertChild(r, parentId, node))
           .toList(growable: false);
@@ -211,7 +212,8 @@ class UiMutator extends Notifier<Project?> {
     } else {
       // 添加为 Page[pageId] 的直接子节点。
       nodePageId = pageId;
-      node = _createDefaultNode(type, pageId: nodePageId);
+      node = _createDefaultNode(type, pageId: nodePageId)
+          .copyWith(layout: _newComponentDefaultLayout);
       final newUi = p.ui
           .map((r) => (r.id == pageId && r.isPage)
               ? r.copyWith(children: [...r.children, node])
@@ -380,7 +382,18 @@ class UiMutator extends Notifier<Project?> {
     _commit(p.copyWith(ui: newUi));
   }
 
-  /// 更新节点布局配置；layout 为 null 时清除布局（退化为默认流式布局）。
+  /// 新增组件的默认布局配置：相对布局 + 2号宫格（上中）+ 宽度 100% 撑满。
+  ///
+  /// 布局是强制开启的，所有组件都必须有 [LayoutConfig]；
+  /// 默认相对布局 + 2 号宫格（从顶部居中往下堆叠）+ 宽度 100%（左右撑满）。
+  static const LayoutConfig _newComponentDefaultLayout = LayoutConfig(
+    mode: LayoutMode.relative,
+    cell: GridCell.topCenter(),
+    width: SizeSpec(value: 100, unit: SizeUnit.percent),
+    height: SizeSpec(value: 40, unit: SizeUnit.px),
+  );
+
+  /// 更新节点布局配置。
   ///
   /// 供布局属性面板与长按移动模式处理器提交 [LayoutConfig] 变更使用。
   void updateLayout(String id, LayoutConfig? layout) {
@@ -398,11 +411,12 @@ class UiMutator extends Notifier<Project?> {
   // 会以一份默认配置（relative + 100%×100% + 零间距）为起点再应用变更。
   // 全部走不可变更新模式（copyWith 链），通过 [_updateLayout] 复用提交逻辑。
 
-  /// 默认布局配置（相对布局 + 100%×100% + 零外间距），作为新增布局的起点。
+  /// 默认布局配置（相对布局 + 2号宫格 + 100%宽 + 零外间距），作为局部修改的起点。
   static LayoutConfig get _defaultLayout => const LayoutConfig(
         mode: LayoutMode.relative,
+        cell: GridCell.topCenter(),
         width: SizeSpec(value: 100, unit: SizeUnit.percent),
-        height: SizeSpec(value: 100, unit: SizeUnit.percent),
+        height: SizeSpec(value: 40, unit: SizeUnit.px),
       );
 
   /// 在节点 [id] 的 [LayoutConfig] 上应用 [transformer]；节点无 layout 时
