@@ -171,10 +171,11 @@ class AndroidBuilder with BuilderUtils implements PlatformBuilder {
 ### 双模布局系统
 [LayoutConfig] 支持两种模式（\`mode\` 字段）：
 
-- **relative（9 宫格相对布局）**：使用 \`cell\`（1-9 宫格归属）+ \`distance\`（距最近边）定位。
+- **relative（相对布局）**：使用 \`cell\`（1-9 位置归属）定位，无"距边距离"概念。
+  - cell 决定对齐（列：左/中/右）与排列方向（行：上→下 / 水平 / 下→上）
   - cell 1/2/3 从顶部往下堆叠；7/8/9 从底部往上堆叠
-  - cell 4 从左往右堆叠；6 从右往左堆叠；cell 5 中心堆叠
-  - 同 cell 内按 \`children\` 列表顺序堆叠（不按 \`distance.value\` 排序）
+  - cell 4 从左往右堆叠；6 从右往左堆叠；cell 5 从中心向下堆叠
+  - 同 cell 内按 \`children\` 列表顺序堆叠
 - **absolute（绝对布局）**：使用 \`x\` / \`y\` 坐标定位（支持百分比 / 像素）
 
 两种模式下 \`width\` / \`height\` 必填（[SizeSpec] 支持百分比 + minPx/maxPx 约束），

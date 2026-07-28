@@ -289,80 +289,6 @@ class MarginSpec {
       'MarginSpec(t=$top, b=$bottom, l=$left, r=$right)';
 }
 
-/// 距离边的方向（相对布局用）。
-enum DistanceEdge {
-  top,
-  bottom,
-  left,
-  right,
-  center;
-
-  String toJson() => name;
-
-  static DistanceEdge fromJson(Object? value) {
-    if (value is DistanceEdge) return value;
-    if (value is String) {
-      return DistanceEdge.values.firstWhere(
-        (e) => e.name == value,
-        orElse: () => DistanceEdge.center,
-      );
-    }
-    return DistanceEdge.center;
-  }
-}
-
-/// 距离规范（相对布局时距最近边的距离）。
-class DistanceSpec {
-  final DistanceEdge edge;
-  final double value;
-  final SizeUnit unit;
-
-  const DistanceSpec({
-    required this.edge,
-    required this.value,
-    this.unit = SizeUnit.percent,
-  });
-
-  DistanceSpec copyWith({
-    DistanceEdge? edge,
-    double? value,
-    SizeUnit? unit,
-  }) =>
-      DistanceSpec(
-        edge: edge ?? this.edge,
-        value: value ?? this.value,
-        unit: unit ?? this.unit,
-      );
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is DistanceSpec &&
-          edge == other.edge &&
-          value == other.value &&
-          unit == other.unit;
-
-  @override
-  int get hashCode => Object.hash(edge, value, unit);
-
-  Map<String, dynamic> toJson() => {
-        'edge': edge.toJson(),
-        'value': value,
-        'unit': unit.toJson(),
-      };
-
-  factory DistanceSpec.fromJson(Map<String, dynamic> json) => DistanceSpec(
-        edge: DistanceEdge.fromJson(json['edge']),
-        value: (json['value'] as num).toDouble(),
-        unit: json['unit'] == null
-            ? SizeUnit.percent
-            : SizeUnit.fromJson(json['unit']),
-      );
-
-  @override
-  String toString() => 'DistanceSpec($edge, $value$unit)';
-}
-
 /// 坐标点（绝对布局用，单个 x 或 y 坐标）。
 class PositionSpec {
   final double value;
@@ -474,15 +400,15 @@ class GridCell {
 /// 布局配置。
 ///
 /// 双模布局：
-/// - [mode] == [LayoutMode.relative]：使用 [cell]（9 宫格归属）+ [distance]
-///   （距最近边）定位；[cell] 必填。
+/// - [mode] == [LayoutMode.relative]：使用 [cell] 定位。[cell] 决定对齐与排列
+///   方式（列=对齐：左/中/右；行=排列方向：上→下 / 水平 / 下→上），无"距边距离"
+///   概念，组件按 children 列表顺序在所属 cell 内堆叠。
 /// - [mode] == [LayoutMode.absolute]：使用 [x] / [y] 坐标定位。
 ///
 /// [width] / [height] 在两种模式下都必填。[margin] 为 4 方向外间距。
 class LayoutConfig {
   final LayoutMode mode;
   final GridCell? cell;
-  final DistanceSpec? distance;
   final PositionSpec? x;
   final PositionSpec? y;
   final SizeSpec width;
@@ -492,7 +418,6 @@ class LayoutConfig {
   const LayoutConfig({
     this.mode = LayoutMode.relative,
     this.cell,
-    this.distance,
     this.x,
     this.y,
     required this.width,
@@ -503,7 +428,6 @@ class LayoutConfig {
   LayoutConfig copyWith({
     LayoutMode? mode,
     Object? cell = _sentinel,
-    Object? distance = _sentinel,
     Object? x = _sentinel,
     Object? y = _sentinel,
     SizeSpec? width,
@@ -513,9 +437,6 @@ class LayoutConfig {
       LayoutConfig(
         mode: mode ?? this.mode,
         cell: identical(cell, _sentinel) ? this.cell : cell as GridCell?,
-        distance: identical(distance, _sentinel)
-            ? this.distance
-            : distance as DistanceSpec?,
         x: identical(x, _sentinel) ? this.x : x as PositionSpec?,
         y: identical(y, _sentinel) ? this.y : y as PositionSpec?,
         width: width ?? this.width,
@@ -529,7 +450,6 @@ class LayoutConfig {
       other is LayoutConfig &&
           mode == other.mode &&
           cell == other.cell &&
-          distance == other.distance &&
           x == other.x &&
           y == other.y &&
           width == other.width &&
@@ -538,12 +458,11 @@ class LayoutConfig {
 
   @override
   int get hashCode =>
-      Object.hash(mode, cell, distance, x, y, width, height, margin);
+      Object.hash(mode, cell, x, y, width, height, margin);
 
   Map<String, dynamic> toJson() => {
         'mode': mode.toJson(),
         if (cell != null) 'cell': cell!.toJson(),
-        if (distance != null) 'distance': distance!.toJson(),
         if (x != null) 'x': x!.toJson(),
         if (y != null) 'y': y!.toJson(),
         'width': width.toJson(),
@@ -556,9 +475,6 @@ class LayoutConfig {
         cell: json['cell'] == null
             ? null
             : GridCell.fromJson(json['cell'] as Map<String, dynamic>),
-        distance: json['distance'] == null
-            ? null
-            : DistanceSpec.fromJson(json['distance'] as Map<String, dynamic>),
         x: json['x'] == null
             ? null
             : PositionSpec.fromJson(json['x'] as Map<String, dynamic>),

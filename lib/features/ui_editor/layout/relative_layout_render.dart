@@ -15,8 +15,8 @@ class LayoutParentData extends ContainerBoxParentData<RenderBox> {
 ///
 /// 使用 [RelativeLayoutEngine] 的静态算法完成位置计算：
 /// - 按 [LayoutConfig.cell] 分 9 个队列
-/// - 每个队列按 [DistanceSpec.value] 升序排序
-/// - 按 cell 的堆叠方向（上→下 / 下→上 / 左→右 / 右→左 / 中心）定位
+/// - 队列保持父组件 `children` 列表顺序（用户通过移动模式调整顺序）
+/// - 按 cell 的堆叠方向（上→下 / 下→上 / 左→右 / 右→左 / 中心向下）定位
 ///
 /// 尺寸解析（[SizeSpec] → 像素）与外间距（[MarginSpec] → [EdgeInsets]）
 /// 委托给 [RelativeLayoutEngine] 的静态工具，确保与引擎行为一致。
@@ -217,8 +217,7 @@ class RelativeLayoutRenderObject extends RenderBox
         parentSize,
       );
       if (i == 0) {
-        final firstOffset = layout?.distance?.value ?? 0;
-        cursorY = margin.top + firstOffset;
+        cursorY = margin.top;
       }
       final x = _alignHorizontal(hAlign, size.width, parentSize.width, margin);
       (child.parentData as LayoutParentData).offset = Offset(x, cursorY);
@@ -246,9 +245,7 @@ class RelativeLayoutRenderObject extends RenderBox
         parentSize,
       );
       if (i == 0) {
-        final firstOffset = layout?.distance?.value ?? 0;
-        cursorY =
-            parentSize.height - margin.bottom - firstOffset - size.height;
+        cursorY = parentSize.height - margin.bottom - size.height;
       } else {
         cursorY -= size.height + margin.top;
       }
@@ -277,8 +274,7 @@ class RelativeLayoutRenderObject extends RenderBox
         parentSize,
       );
       if (i == 0) {
-        final firstOffset = layout?.distance?.value ?? 0;
-        cursorX = margin.left + firstOffset;
+        cursorX = margin.left;
       }
       final y = _alignVertical(vAlign, size.height, parentSize.height, margin);
       (child.parentData as LayoutParentData).offset = Offset(cursorX, y);
@@ -306,8 +302,7 @@ class RelativeLayoutRenderObject extends RenderBox
         parentSize,
       );
       if (i == 0) {
-        final firstOffset = layout?.distance?.value ?? 0;
-        cursorX = parentSize.width - margin.right - firstOffset - size.width;
+        cursorX = parentSize.width - margin.right - size.width;
       } else {
         cursorX -= size.width + margin.left;
       }
@@ -319,56 +314,30 @@ class RelativeLayoutRenderObject extends RenderBox
     }
   }
 
-  /// 中心格（cell 5）：根据 distance.edge 向上或向下堆叠。
+  /// 中心格（cell 5）：从中心向下堆叠。
   void _stackCenterCell(
     List<RenderBox> children,
     Map<RenderBox, Size> childSizes,
     Size parentSize,
   ) {
-    final firstLayout =
-        (children.first.parentData as LayoutParentData).layout;
-    final edge = firstLayout?.distance?.edge ?? DistanceEdge.bottom;
     final centerOffset = parentSize.height / 2;
-    final firstDistance = firstLayout?.distance?.value ?? 0;
-
-    if (edge == DistanceEdge.top) {
-      // 从中心往上堆叠。
-      var cursorY = centerOffset - firstDistance;
-      for (var i = 0; i < children.length; i++) {
-        final child = children[i];
-        final size = childSizes[child] ?? Size.zero;
-        final layout = (child.parentData as LayoutParentData).layout;
-        final margin = RelativeLayoutEngine.resolveMargin(
-          layout?.margin ?? const MarginSpec(),
-          parentSize,
-        );
-        cursorY -= size.height + margin.bottom;
-        final x = (parentSize.width - size.width) / 2;
-        (child.parentData as LayoutParentData).offset = Offset(x, cursorY);
-        if (i < children.length - 1) {
-          cursorY -= margin.top;
-        }
+    var cursorY = centerOffset;
+    for (var i = 0; i < children.length; i++) {
+      final child = children[i];
+      final size = childSizes[child] ?? Size.zero;
+      final layout = (child.parentData as LayoutParentData).layout;
+      final margin = RelativeLayoutEngine.resolveMargin(
+        layout?.margin ?? const MarginSpec(),
+        parentSize,
+      );
+      if (i == 0) {
+        cursorY += margin.top;
       }
-    } else {
-      // 从中心往下堆叠。
-      var cursorY = centerOffset + firstDistance;
-      for (var i = 0; i < children.length; i++) {
-        final child = children[i];
-        final size = childSizes[child] ?? Size.zero;
-        final layout = (child.parentData as LayoutParentData).layout;
-        final margin = RelativeLayoutEngine.resolveMargin(
-          layout?.margin ?? const MarginSpec(),
-          parentSize,
-        );
-        if (i == 0) {
-          cursorY += margin.top;
-        }
-        final x = (parentSize.width - size.width) / 2;
-        (child.parentData as LayoutParentData).offset = Offset(x, cursorY);
-        cursorY += size.height + margin.bottom;
-        if (i < children.length - 1) {
-          cursorY += margin.top;
-        }
+      final x = (parentSize.width - size.width) / 2;
+      (child.parentData as LayoutParentData).offset = Offset(x, cursorY);
+      cursorY += size.height + margin.bottom;
+      if (i < children.length - 1) {
+        cursorY += margin.top;
       }
     }
   }

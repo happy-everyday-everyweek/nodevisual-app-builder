@@ -8,7 +8,7 @@ import '../widgets/grid9_selector.dart';
 /// 布局属性面板：编辑选中组件的 [LayoutConfig]。
 ///
 /// 支持双模布局编辑：
-/// - **相对布局（9宫格）**：选择归属 cell、设置距边距离与方向
+/// - **相对布局**：选择对齐与排列方式（列=对齐，行=排列方向）
 /// - **绝对布局**：设置 x/y 坐标（px 或 %）
 ///
 /// 两种模式均可编辑宽高（含单位与 minPx/maxPx clamp）与 4 方向外间距。
@@ -85,8 +85,8 @@ class LayoutPanel extends ConsumerWidget {
           segments: const [
             ButtonSegment(
               value: LayoutMode.relative,
-              label: Text('9宫格'),
-              icon: Icon(Icons.grid_view, size: 18),
+              label: Text('相对布局'),
+              icon: Icon(Icons.view_quilt_rounded, size: 18),
             ),
             ButtonSegment(
               value: LayoutMode.absolute,
@@ -113,10 +113,11 @@ class LayoutPanel extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('归属宫格', style: theme.textTheme.labelMedium),
+        Text('对齐与排列', style: theme.textTheme.labelMedium),
         const SizedBox(height: 4),
         Text(
-          '点击选择组件在 9 宫格中的归属位置，长按格子查看堆叠方向说明。',
+          '列决定水平对齐（左 / 中 / 右），行决定排列方向'
+          '（上→下 / 水平 / 下→上）。长按格子查看说明。',
           style: theme.textTheme.bodySmall
               ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
         ),
@@ -124,81 +125,6 @@ class LayoutPanel extends ConsumerWidget {
         Grid9Selector(
           selectedCell: layout.cell?.cell,
           onCellSelected: (cell) => _commit(ref, layout.copyWith(cell: cell)),
-        ),
-        const SizedBox(height: 12),
-        Text('距边距离', style: theme.textTheme.labelMedium),
-        const SizedBox(height: 4),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              flex: 3,
-              child: _LayoutTextField(
-                label: '距离',
-                value: layout.distance?.value ?? 0,
-                onChanged: (v) => _commit(
-                  ref,
-                  layout.copyWith(
-                    distance: (layout.distance ??
-                            const DistanceSpec(
-                              edge: DistanceEdge.top,
-                              value: 0,
-                            ))
-                        .copyWith(value: v),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              flex: 2,
-              child: _UnitDropdown<SizeUnit>(
-                label: '单位',
-                value: layout.distance?.unit ?? SizeUnit.percent,
-                items: const [
-                  (SizeUnit.px, 'px'),
-                  (SizeUnit.percent, '%'),
-                ],
-                onChanged: (unit) => _commit(
-                  ref,
-                  layout.copyWith(
-                    distance: (layout.distance ??
-                            const DistanceSpec(
-                              edge: DistanceEdge.top,
-                              value: 0,
-                            ))
-                        .copyWith(unit: unit),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              flex: 2,
-              child: _UnitDropdown<DistanceEdge>(
-                label: '方向',
-                value: layout.distance?.edge ?? DistanceEdge.top,
-                items: const [
-                  (DistanceEdge.top, '上'),
-                  (DistanceEdge.bottom, '下'),
-                  (DistanceEdge.left, '左'),
-                  (DistanceEdge.right, '右'),
-                  (DistanceEdge.center, '中心'),
-                ],
-                onChanged: (edge) => _commit(
-                  ref,
-                  layout.copyWith(
-                    distance: (layout.distance ??
-                            const DistanceSpec(
-                              edge: DistanceEdge.top,
-                              value: 0,
-                            ))
-                        .copyWith(edge: edge),
-                  ),
-                ),
-              ),
-            ),
-          ],
         ),
       ],
     );
